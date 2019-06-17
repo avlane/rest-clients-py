@@ -59,6 +59,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "not found"}, 404)
         self.send_json(ITEMS)
 
+    def h_echo(self):
+        self.send_json({
+            "method": self.command,
+            "path": "/" + "/".join(self.segments),
+            "query": self.query,
+            "headers": {k.lower(): v for k, v in self.headers.items()},
+        })
+
     # ROUTES-END
 
 
@@ -68,7 +76,8 @@ class ApiServer:
     def __init__(self):
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
-        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05},
+                                       daemon=True)
 
     @property
     def url(self):
