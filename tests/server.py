@@ -67,6 +67,10 @@ class Handler(BaseHTTPRequestHandler):
             "headers": {k.lower(): v for k, v in self.headers.items()},
         })
 
+    def h_status(self):
+        code = int(self.segments[1])
+        self.send_json({"error": "status %d requested" % code}, code)
+
     # ROUTES-END
 
 

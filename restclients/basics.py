@@ -3,8 +3,11 @@
 Everything later in the package is a refinement of this one function.
 """
 import json
+import urllib.error
 import urllib.request
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
+
+from restclients.errors import error_for_status
 
 USER_AGENT = "rest-clients-py/0.1"
 
@@ -35,8 +38,13 @@ def get_json(url, params=None, headers=None, timeout=10):
     """GET ``url`` and return the decoded JSON body."""
     send_headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
     send_headers.update(headers or {})
-    req = urllib.request.Request(build_url(url, params), headers=send_headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read()
-        charset = resp.headers.get_content_charset() or "utf-8"
+    full_url = build_url(url, params)
+    req = urllib.request.Request(full_url, headers=send_headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            charset = resp.headers.get_content_charset() or "utf-8"
+    except urllib.error.HTTPError as exc:
+        # urllib raises for every non-2xx status; translate by status code.
+        raise error_for_status(exc.code, full_url, exc.read(), dict(exc.headers)) from None
     return json.loads(raw.decode(charset))
