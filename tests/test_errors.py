@@ -53,6 +53,27 @@ class GetJsonErrorTests(unittest.TestCase):
         with self.assertRaises(errors.ApiError):
             basics.get_json(self.server.url + "/status/401")
 
+    def test_non_json_body(self):
+        with self.assertRaises(errors.ApiError) as ctx:
+            basics.get_json(self.server.url + "/html")
+        self.assertIn("not valid JSON", ctx.exception.message)
+        self.assertTrue(ctx.exception.body.startswith(b"<html>"))
+
+
+class TransportFailureTests(unittest.TestCase):
+    def test_read_timeout(self):
+        with ApiServer() as server:
+            with self.assertRaises(errors.TransportError):
+                basics.get_json(server.url + "/slow", {"delay": 1}, timeout=0.2)
+
+    def test_connection_refused(self):
+        with ApiServer() as server:
+            dead_url = server.url
+        # the server is shut down again, so nothing is listening on that port
+        with self.assertRaises(errors.TransportError) as ctx:
+            basics.get_json(dead_url + "/items", timeout=1)
+        self.assertIsNone(ctx.exception.status)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
-from restclients.errors import error_for_status
+from restclients.errors import ApiError, TransportError, error_for_status
 
 USER_AGENT = "rest-clients-py/0.1"
 
@@ -47,4 +47,14 @@ def get_json(url, params=None, headers=None, timeout=10):
     except urllib.error.HTTPError as exc:
         # urllib raises for every non-2xx status; translate by status code.
         raise error_for_status(exc.code, full_url, exc.read(), dict(exc.headers)) from None
-    return json.loads(raw.decode(charset))
+    except urllib.error.URLError as exc:
+        # DNS failure, connection refused, TLS problem, connect timeout.
+        raise TransportError("cannot reach %s: %s" % (full_url, exc.reason), url=full_url) from None
+    except OSError as exc:
+        # A timeout while reading the body surfaces as a bare socket.timeout.
+        raise TransportError("%s while talking to %s" % (exc or type(exc).__name__, full_url),
+                             url=full_url) from None
+    try:
+        return json.loads(raw.decode(charset))
+    except ValueError:
+        raise ApiError("response body is not valid JSON", url=full_url, body=raw) from None

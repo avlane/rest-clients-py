@@ -6,6 +6,7 @@ urllib code paths are exercised over real sockets. Routes are methods named
 """
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -70,6 +71,18 @@ class Handler(BaseHTTPRequestHandler):
     def h_status(self):
         code = int(self.segments[1])
         self.send_json({"error": "status %d requested" % code}, code)
+
+    def h_slow(self):
+        time.sleep(float(self.q("delay", "0.5")))
+        self.send_json({"slept": True})
+
+    def h_html(self):
+        body = b"<html><body>not json</body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     # ROUTES-END
 
