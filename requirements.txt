@@ -1,0 +1,3 @@
+# Only needed for restclients.requests_client when no session is injected.
+# The standard-library clients and all tests need nothing beyond Python.
+requests>=2.21.0
