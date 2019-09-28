@@ -7,8 +7,16 @@ from restclients.errors import TransportError
 from restclients.response import Response
 
 
+def socket_timeout(timeout):
+    """urllib has a single socket timeout, so a (connect, read) pair becomes the larger one."""
+    if isinstance(timeout, (tuple, list)):
+        return max(t for t in timeout if t is not None) if any(t is not None for t in timeout) else None
+    return timeout
+
+
 class UrllibClient(HttpClient):
     def _send(self, method, url, headers, body, timeout):
+        timeout = socket_timeout(timeout)
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:

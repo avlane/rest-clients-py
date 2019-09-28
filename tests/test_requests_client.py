@@ -46,6 +46,16 @@ class RequestsClientTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             RequestsClient(session).get("http://api.test/x")
 
+    def test_timeout_pair_is_passed_through(self):
+        session = FakeSession()
+        RequestsClient(session, timeout=(2, 9)).get("http://api.test/x")
+        self.assertEqual(session.calls[0]["timeout"], (2, 9))
+
+    def test_per_call_timeout_overrides_default(self):
+        session = FakeSession()
+        RequestsClient(session, timeout=5).get("http://api.test/x", timeout=0.5)
+        self.assertEqual(session.calls[0]["timeout"], 0.5)
+
     def test_close_closes_session(self):
         session = FakeSession()
         RequestsClient(session).close()

@@ -13,6 +13,12 @@ USER_AGENT = "rest-clients-py/0.1"
 
 
 class HttpClient:
+    """Base class.
+
+    ``timeout`` is seconds, or a ``(connect, read)`` pair. Unlike requests,
+    which waits forever unless told otherwise, a client here always has one.
+    """
+
     def __init__(self, base_url="", headers=None, timeout=10.0):
         self.base_url = base_url
         self.timeout = timeout

@@ -68,6 +68,12 @@ class UrllibClientTests(unittest.TestCase):
         other = UrllibClient(base_url="http://invalid.example")
         self.assertEqual(other.get_json(self.server.url + "/items/1")["id"], 1)
 
+    def test_timeout_pair_uses_larger_value(self):
+        client = UrllibClient(base_url=self.server.url, timeout=(0.1, 0.3))
+        with self.assertRaises(errors.TransportError):
+            client.get("/slow", params={"delay": 1})
+        self.assertEqual(client.get_json("/slow", params={"delay": 0.05}), {"slept": True})
+
 
 if __name__ == "__main__":
     unittest.main()
