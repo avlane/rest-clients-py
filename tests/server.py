@@ -84,6 +84,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def h_pages(self):
+        """page/limit pagination with an envelope."""
+        page = max(1, int(self.q("page", 1)))
+        limit = min(50, max(1, int(self.q("limit", 10))))
+        start = (page - 1) * limit
+        self.send_json({"items": ITEMS[start:start + limit], "page": page,
+                        "limit": limit, "total": len(ITEMS)})
+
     # ROUTES-END
 
 
