@@ -92,6 +92,23 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"items": ITEMS[start:start + limit], "page": page,
                         "limit": limit, "total": len(ITEMS)})
 
+    def h_linked(self):
+        """GitHub-style pagination: a bare list plus a Link header."""
+        page = max(1, int(self.q("page", 1)))
+        per_page = min(50, max(1, int(self.q("per_page", 10))))
+        start = (page - 1) * per_page
+        last = (len(ITEMS) + per_page - 1) // per_page
+        base = "http://%s/linked?per_page=%d&page=" % (self.headers["Host"], per_page)
+        links = []
+        if page < last:
+            links.append('<%s%d>; rel="next"' % (base, page + 1))
+            links.append('<%s%d>; rel="last"' % (base, last))
+        if page > 1:
+            links.append('<%s%d>; rel="prev"' % (base, page - 1))
+            links.append('<%s1>; rel="first"' % base)
+        headers = {"Link": ", ".join(links)} if links else {}
+        self.send_json(ITEMS[start:start + per_page], headers=headers)
+
     # ROUTES-END
 
 

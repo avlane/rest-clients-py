@@ -1,6 +1,6 @@
 import unittest
 
-from restclients.pagination import paginate_pages
+from restclients.pagination import paginate_links, paginate_pages, parse_link_header
 from restclients.urllib_client import UrllibClient
 from tests.server import ApiServer
 
@@ -38,6 +38,48 @@ class PageLimitTests(unittest.TestCase):
     def test_extra_params_are_kept(self):
         list(paginate_pages(self.client, "/pages", params={"q": "x"}, limit=50))
         self.assertIn("q=x", self.server.requests[-1][1])
+
+
+class LinkHeaderTests(unittest.TestCase):
+    def test_parse(self):
+        header = ('<https://api.test/items?page=2>; rel="next", '
+                  '<https://api.test/items?page=9>; rel="last"')
+        self.assertEqual(parse_link_header(header), {
+            "next": "https://api.test/items?page=2", "last": "https://api.test/items?page=9"})
+
+    def test_parse_unquoted_and_extra_params(self):
+        header = '<http://x/a?b=1,2>; title="Next page"; rel=next'
+        self.assertEqual(parse_link_header(header), {"next": "http://x/a?b=1,2"})
+
+    def test_empty(self):
+        self.assertEqual(parse_link_header(None), {})
+        self.assertEqual(parse_link_header(""), {})
+        self.assertEqual(parse_link_header("garbage"), {})
+
+
+class LinkPaginationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ApiServer().__enter__()
+        cls.client = UrllibClient(base_url=cls.server.url)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.__exit__(None, None, None)
+
+    def test_follows_next_links(self):
+        before = len(self.server.requests)
+        items = list(paginate_links(self.client, "/linked", params={"per_page": 10}))
+        self.assertEqual([i["id"] for i in items], list(range(1, 24)))
+        self.assertEqual(len(self.server.requests) - before, 3)
+
+    def test_max_pages(self):
+        items = list(paginate_links(self.client, "/linked", params={"per_page": 5}, max_pages=2))
+        self.assertEqual(len(items), 10)
+
+    def test_single_page_has_no_link_header(self):
+        items = list(paginate_links(self.client, "/linked", params={"per_page": 50}))
+        self.assertEqual(len(items), 23)
 
 
 if __name__ == "__main__":
