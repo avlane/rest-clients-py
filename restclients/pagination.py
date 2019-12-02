@@ -73,3 +73,34 @@ def paginate_pages(client, path, params=None, limit=10, items_key="items",
         if not items or len(items) < limit or (total is not None and seen >= total):
             return
         page += 1
+
+
+def _dig(data, dotted, default=None):
+    """``_dig({"a": {"b": 1}}, "a.b")`` -> 1."""
+    for part in dotted.split("."):
+        if not isinstance(data, dict) or part not in data:
+            return default
+        data = data[part]
+    return data
+
+
+def paginate_cursor(client, path, params=None, items_key="data", next_key="meta.next_cursor",
+                    cursor_param="cursor", max_pages=None):
+    """Walk a cursor API: send back the opaque token the server gave us.
+
+    ``next_key`` may be dotted for nested envelopes. A missing, null or empty
+    token ends the walk.
+    """
+    cursor = None
+    fetched = 0
+    while max_pages is None or fetched < max_pages:
+        query = dict(params or {})
+        if cursor:
+            query[cursor_param] = cursor
+        body = client.get_json(path, params=query)
+        for item in _dig(body, items_key, []):
+            yield item
+        fetched += 1
+        cursor = _dig(body, next_key)
+        if not cursor:
+            return

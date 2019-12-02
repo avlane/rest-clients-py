@@ -4,6 +4,7 @@ It runs on a ThreadingHTTPServer bound to an ephemeral localhost port, so the
 urllib code paths are exercised over real sockets. Routes are methods named
 ``h_<first path segment>``; add a method to add a route.
 """
+import base64
 import json
 import threading
 import time
@@ -108,6 +109,21 @@ class Handler(BaseHTTPRequestHandler):
             links.append('<%s1>; rel="first"' % base)
         headers = {"Link": ", ".join(links)} if links else {}
         self.send_json(ITEMS[start:start + per_page], headers=headers)
+
+    def h_cursor(self):
+        """Opaque-cursor pagination: ``next_cursor`` is null on the last page."""
+        offset = 0
+        if self.q("cursor"):
+            try:
+                offset = int(base64.urlsafe_b64decode(self.q("cursor").encode()).decode().split(":")[1])
+            except (ValueError, IndexError):
+                return self.send_json({"error": "bad cursor"}, 400)
+        limit = min(50, max(1, int(self.q("limit", 10))))
+        end = offset + limit
+        nxt = None
+        if end < len(ITEMS):
+            nxt = base64.urlsafe_b64encode(("offset:%d" % end).encode()).decode()
+        self.send_json({"data": ITEMS[offset:end], "meta": {"next_cursor": nxt}})
 
     # ROUTES-END
 

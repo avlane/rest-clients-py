@@ -1,6 +1,7 @@
 import unittest
 
-from restclients.pagination import paginate_links, paginate_pages, parse_link_header
+from restclients.pagination import (paginate_cursor, paginate_links, paginate_pages,
+                                  parse_link_header)
 from restclients.urllib_client import UrllibClient
 from tests.server import ApiServer
 
@@ -80,6 +81,31 @@ class LinkPaginationTests(unittest.TestCase):
     def test_single_page_has_no_link_header(self):
         items = list(paginate_links(self.client, "/linked", params={"per_page": 50}))
         self.assertEqual(len(items), 23)
+
+
+class CursorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ApiServer().__enter__()
+        cls.client = UrllibClient(base_url=cls.server.url)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.__exit__(None, None, None)
+
+    def test_walks_to_the_end(self):
+        items = list(paginate_cursor(self.client, "/cursor", params={"limit": 8}))
+        self.assertEqual([i["id"] for i in items], list(range(1, 24)))
+
+    def test_stops_early(self):
+        before = len(self.server.requests)
+        items = list(paginate_cursor(self.client, "/cursor", params={"limit": 5}, max_pages=2))
+        self.assertEqual(len(items), 10)
+        self.assertEqual(len(self.server.requests) - before, 2)
+
+    def test_second_request_carries_cursor(self):
+        list(paginate_cursor(self.client, "/cursor", params={"limit": 20}))
+        self.assertIn("cursor=", self.server.requests[-1][1])
 
 
 if __name__ == "__main__":
