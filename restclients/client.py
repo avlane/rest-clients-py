@@ -19,23 +19,28 @@ class HttpClient:
     which waits forever unless told otherwise, a client here always has one.
     """
 
-    def __init__(self, base_url="", headers=None, timeout=10.0):
+    def __init__(self, base_url="", headers=None, timeout=10.0, auth=None):
         self.base_url = base_url
+        self.auth = auth
         self.timeout = timeout
         self.headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
         self.headers.update(headers or {})
 
     # -- public API -------------------------------------------------------
     def request(self, method, path, params=None, headers=None, json=None, data=None,
-                timeout=None, raise_for_status=True):
+                timeout=None, raise_for_status=True, auth=None):
         """Send a request and return a :class:`Response`.
 
         ``json`` is encoded as the body (with a Content-Type); ``data`` is sent
         as raw bytes. Error statuses raise unless ``raise_for_status`` is False.
+        ``auth`` (or the client's default) signs the request.
         """
         url = build_url(join_url(self.base_url, path), params)
         send_headers = dict(self.headers)
         send_headers.update(headers or {})
+        auth = auth or self.auth
+        if auth is not None:
+            auth.apply(send_headers)
         body = data
         if json is not None:
             body = _json.dumps(json).encode("utf-8")

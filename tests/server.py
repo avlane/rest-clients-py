@@ -125,6 +125,26 @@ class Handler(BaseHTTPRequestHandler):
             nxt = base64.urlsafe_b64encode(("offset:%d" % end).encode()).decode()
         self.send_json({"data": ITEMS[offset:end], "meta": {"next_cursor": nxt}})
 
+    def _challenge(self, scheme, extra=""):
+        self.send_json({"error": "authentication required"}, 401,
+                       {"WWW-Authenticate": scheme + extra})
+
+    def h_basic(self):
+        expected = "Basic " + base64.b64encode(b"avery:s3cret").decode()
+        if self.headers.get("Authorization") != expected:
+            return self._challenge("Basic", ' realm="test"')
+        self.send_json({"user": "avery"})
+
+    def h_bearer(self):
+        if self.headers.get("Authorization") != "Bearer tok-123":
+            return self._challenge("Bearer", ' realm="test"')
+        self.send_json({"user": "avery", "scope": "read"})
+
+    def h_apikey(self):
+        if self.headers.get("X-API-Key") != "key-abc":
+            return self.send_json({"error": "bad key"}, 403)
+        self.send_json({"ok": True})
+
     # ROUTES-END
 
 
