@@ -1,7 +1,8 @@
 import random
 import unittest
 
-from restclients.retry import RetryPolicy
+from restclients import errors
+from restclients.retry import RetryPolicy, parse_retry_after
 
 
 class RetryPolicyTests(unittest.TestCase):
@@ -33,11 +34,50 @@ class RetryPolicyTests(unittest.TestCase):
         policy = RetryPolicy()
         self.assertTrue(policy.should_retry_status(503))
         self.assertFalse(policy.should_retry_status(404))
-        self.assertFalse(policy.should_retry_status(429))  # handled with Retry-After later
+        self.assertTrue(policy.should_retry_status(429))
 
     def test_zero_attempts_rejected(self):
         with self.assertRaises(ValueError):
             RetryPolicy(max_attempts=0)
+
+    def test_retry_after_is_a_floor(self):
+        policy = RetryPolicy(backoff_base=1, jitter=False)
+        self.assertEqual(policy.wait_seconds(1, retry_after=10), 10)
+        self.assertEqual(policy.wait_seconds(3, retry_after=1), 4)
+        self.assertEqual(policy.wait_seconds(1), 1)
+
+    def test_retry_after_beyond_cap_gives_up(self):
+        policy = RetryPolicy(jitter=False, max_retry_after=30)
+        self.assertIsNone(policy.wait_seconds(1, retry_after=31))
+        self.assertEqual(policy.wait_seconds(1, retry_after=30), 30)
+
+
+class ParseRetryAfterTests(unittest.TestCase):
+    def test_delta_seconds(self):
+        self.assertEqual(parse_retry_after("120"), 120.0)
+        self.assertEqual(parse_retry_after(" 0 "), 0.0)
+
+    def test_http_date(self):
+        # Wed, 21 Oct 2015 07:28:00 GMT is 1445412480
+        self.assertEqual(parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT", now=1445412470), 10.0)
+
+    def test_http_date_in_the_past_is_zero(self):
+        self.assertEqual(parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT", now=1445412999), 0.0)
+
+    def test_garbage_and_missing(self):
+        self.assertIsNone(parse_retry_after(None))
+        self.assertIsNone(parse_retry_after(""))
+        self.assertIsNone(parse_retry_after("soon"))
+
+
+class RateLimitedErrorTests(unittest.TestCase):
+    def test_retry_after_property(self):
+        err = errors.error_for_status(429, headers={"retry-after": "7"})
+        self.assertIsInstance(err, errors.RateLimited)
+        self.assertEqual(err.retry_after, 7.0)
+
+    def test_retry_after_absent(self):
+        self.assertIsNone(errors.error_for_status(429).retry_after)
 
 
 if __name__ == "__main__":

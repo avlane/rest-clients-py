@@ -4,9 +4,33 @@ This module is pure decision-making. It never sleeps or sends anything, so it
 is easy to test; the client owns the loop (see ``HttpClient.request``).
 """
 import random
+import time
+from email.utils import parsedate_to_datetime
 
 IDEMPOTENT_METHODS = frozenset(["GET", "HEAD", "PUT", "DELETE", "OPTIONS", "TRACE"])
-RETRY_STATUSES = frozenset([500, 502, 503, 504])
+RETRY_STATUSES = frozenset([429, 500, 502, 503, 504])
+
+
+def parse_retry_after(value, now=None):
+    """Seconds to wait according to a ``Retry-After`` header, or None.
+
+    The header is either delta-seconds (``120``) or an HTTP-date
+    (``Wed, 21 Oct 2015 07:28:00 GMT``). Dates in the past give 0.
+    ``now`` is a timestamp, injectable for tests.
+    """
+    if value is None:
+        return None
+    value = str(value).strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    current = now if now is not None else time.time()
+    return max(0.0, when.timestamp() - current)
 
 
 class RetryPolicy:
@@ -20,7 +44,8 @@ class RetryPolicy:
     """
 
     def __init__(self, max_attempts=3, backoff_base=0.5, max_delay=30.0, jitter=True,
-                 statuses=RETRY_STATUSES, methods=IDEMPOTENT_METHODS, rng=None):
+                 statuses=RETRY_STATUSES, methods=IDEMPOTENT_METHODS, rng=None,
+                 max_retry_after=60.0):
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
         self.max_attempts = max_attempts
@@ -30,11 +55,26 @@ class RetryPolicy:
         self.statuses = frozenset(statuses)
         self.methods = frozenset(m.upper() for m in methods)
         self.rng = rng or random.Random()
+        self.max_retry_after = max_retry_after
 
     def backoff(self, retry_number):
         """Seconds to wait before retry number ``retry_number`` (1-based)."""
         ceiling = min(self.max_delay, self.backoff_base * (2 ** (retry_number - 1)))
         return self.rng.uniform(0, ceiling) if self.jitter else ceiling
+
+    def wait_seconds(self, retry_number, retry_after=None):
+        """How long to sleep before a retry, or None to give up instead.
+
+        A server's ``Retry-After`` is a floor under our own backoff. If the
+        server asks for longer than ``max_retry_after`` we would rather fail
+        than block the caller that long.
+        """
+        wait = self.backoff(retry_number)
+        if retry_after is not None:
+            if retry_after > self.max_retry_after:
+                return None
+            wait = max(wait, retry_after)
+        return wait
 
     def should_retry_method(self, method):
         return method.upper() in self.methods

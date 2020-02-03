@@ -55,7 +55,12 @@ class Conflict(ClientError):
 
 
 class RateLimited(ClientError):
-    pass
+    """429. ``retry_after`` is the server's requested wait in seconds, if it gave one."""
+
+    @property
+    def retry_after(self):
+        from restclients.retry import parse_retry_after
+        return parse_retry_after(_header(self.headers, "Retry-After"))
 
 
 _BY_STATUS = {
@@ -79,6 +84,14 @@ def error_for_status(status, url=None, body=None, headers=None):
     else:
         cls = HttpStatusError
     return cls(_summarize(body) or "request failed", status, url, body, headers)
+
+
+def _header(headers, name):
+    wanted = name.lower()
+    for key, value in (headers or {}).items():
+        if key.lower() == wanted:
+            return value
+    return None
 
 
 def _summarize(body):
