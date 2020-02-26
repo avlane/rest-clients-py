@@ -145,6 +145,35 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "bad key"}, 403)
         self.send_json({"ok": True})
 
+    def _count(self, key):
+        with self.server.lock:
+            self.server.counters[key] = self.server.counters.get(key, 0) + 1
+            return self.server.counters[key]
+
+    def h_flaky(self):
+        """Fail with ``status`` (default 503) for the first ``fail`` calls per ``key``."""
+        n = self._count("flaky:" + self.q("key", "default"))
+        if n <= int(self.q("fail", 2)):
+            return self.send_json({"error": "temporarily broken", "call": n},
+                                  int(self.q("status", 503)))
+        self.send_json({"ok": True, "call": n})
+
+    def h_limited(self):
+        """429 with Retry-After for the first ``times`` calls per ``key``."""
+        n = self._count("limited:" + self.q("key", "default"))
+        if n <= int(self.q("times", 1)):
+            return self.send_json({"error": "slow down"}, 429,
+                                  {"Retry-After": self.q("after", "1")})
+        self.send_json({"ok": True, "call": n})
+
+    def h_drop(self):
+        """Close the connection without answering for the first ``fail`` calls."""
+        n = self._count("drop:" + self.q("key", "default"))
+        if n <= int(self.q("fail", 1)):
+            self.close_connection = True
+            return
+        self.send_json({"ok": True, "call": n})
+
     # ROUTES-END
 
 
@@ -154,12 +183,18 @@ class ApiServer:
     def __init__(self):
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
+        self.httpd.counters = {}
+        self.httpd.lock = threading.Lock()
         self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05},
                                        daemon=True)
 
     @property
     def url(self):
         return "http://127.0.0.1:%d" % self.httpd.server_address[1]
+
+    @property
+    def counters(self):
+        return self.httpd.counters
 
     @property
     def requests(self):

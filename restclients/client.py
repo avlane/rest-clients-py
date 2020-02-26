@@ -5,8 +5,11 @@ JSON bodies, status checking) lives here, so the urllib, requests and httpx
 clients behave the same way.
 """
 import json as _json
+import time
 
+from restclients.errors import TransportError
 from restclients.response import Response
+from restclients.retry import parse_retry_after
 from restclients.urls import build_url, join_url
 
 USER_AGENT = "rest-clients-py/0.1"
@@ -19,7 +22,10 @@ class HttpClient:
     which waits forever unless told otherwise, a client here always has one.
     """
 
-    def __init__(self, base_url="", headers=None, timeout=10.0, auth=None):
+    def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
+                 sleep=time.sleep):
+        self.retry = retry
+        self._sleep = sleep
         self.base_url = base_url
         self.auth = auth
         self.timeout = timeout
@@ -45,8 +51,8 @@ class HttpClient:
         if json is not None:
             body = _json.dumps(json).encode("utf-8")
             send_headers.setdefault("Content-Type", "application/json")
-        response = self._send(method.upper(), url, send_headers, body,
-                              self.timeout if timeout is None else timeout)
+        response = self._send_with_retries(method.upper(), url, send_headers, body,
+                                           self.timeout if timeout is None else timeout)
         if raise_for_status:
             response.raise_for_status()
         return response
@@ -68,6 +74,28 @@ class HttpClient:
 
     def get_json(self, path, params=None, **kwargs):
         return self.get(path, params=params, **kwargs).json()
+
+    def _send_with_retries(self, method, url, headers, body, timeout):
+        policy = self.retry
+        attempt = 0
+        while True:
+            attempt += 1
+            retryable = (policy is not None and policy.should_retry_method(method)
+                         and policy.attempts_left(attempt))
+            try:
+                response = self._send(method, url, headers, body, timeout)
+            except TransportError:
+                if not retryable:
+                    raise
+                self._sleep(policy.wait_seconds(attempt))
+                continue
+            if retryable and policy.should_retry_status(response.status):
+                retry_after = parse_retry_after(response.headers.get("Retry-After"))
+                wait = policy.wait_seconds(attempt, retry_after)
+                if wait is not None:
+                    self._sleep(wait)
+                    continue
+            return response
 
     # -- to be provided by subclasses --------------------------------------
     def _send(self, method, url, headers, body, timeout):

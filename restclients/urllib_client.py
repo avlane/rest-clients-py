@@ -23,7 +23,10 @@ class UrllibClient(HttpClient):
                 return Response(resp.status, list(resp.headers.items()), resp.read(), url)
         except urllib.error.HTTPError as exc:
             # An error status is still a response; the caller decides whether to raise.
-            return Response(exc.code, list(exc.headers.items()), exc.read(), url)
+            try:
+                return Response(exc.code, list(exc.headers.items()), exc.read(), url)
+            finally:
+                exc.close()
         except urllib.error.URLError as exc:
             raise TransportError("cannot reach %s: %s" % (url, exc.reason), url=url) from None
         except OSError as exc:
