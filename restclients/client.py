@@ -23,8 +23,9 @@ class HttpClient:
     """
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
-                 sleep=time.sleep):
+                 sleep=time.sleep, rate_limiter=None):
         self.retry = retry
+        self.rate_limiter = rate_limiter
         self._sleep = sleep
         self.base_url = base_url
         self.auth = auth
@@ -82,6 +83,8 @@ class HttpClient:
             attempt += 1
             retryable = (policy is not None and policy.should_retry_method(method)
                          and policy.attempts_left(attempt))
+            if self.rate_limiter is not None:
+                self.rate_limiter.acquire()  # retries count against the limit too
             try:
                 response = self._send(method, url, headers, body, timeout)
             except TransportError:
