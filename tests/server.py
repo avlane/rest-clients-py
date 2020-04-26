@@ -174,6 +174,24 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_json({"ok": True, "call": n})
 
+    def h_etag(self):
+        """A resource whose version bumps on POST /etag/bump; honours If-None-Match."""
+        if self.segments[1:] == ["bump"] and self.command == "POST":
+            n = self._count("etag-version")
+            return self.send_json({"version": n + 1})
+        version = self.server.counters.get("etag-version", 0) + 1
+        etag = '"v%d"' % version
+        candidates = [c.strip() for c in self.headers.get("If-None-Match", "").split(",")]
+        if etag in candidates or "W/" + etag in candidates or "*" in candidates:
+            self._count("etag-304")
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "max-age=60")
+            self.end_headers()
+            return
+        self._count("etag-200")
+        self.send_json({"version": version, "payload": "x" * 200}, headers={"ETag": etag})
+
     # ROUTES-END
 
 

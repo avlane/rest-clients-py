@@ -23,7 +23,8 @@ class HttpClient:
     """
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
-                 sleep=time.sleep, rate_limiter=None):
+                 sleep=time.sleep, rate_limiter=None, cache=None):
+        self.cache = cache
         self.retry = retry
         self.rate_limiter = rate_limiter
         self._sleep = sleep
@@ -40,7 +41,8 @@ class HttpClient:
 
         ``json`` is encoded as the body (with a Content-Type); ``data`` is sent
         as raw bytes. Error statuses raise unless ``raise_for_status`` is False.
-        ``auth`` (or the client's default) signs the request.
+        ``auth`` (or the client's default) signs the request. With a ``cache``, GETs
+        are revalidated using ``If-None-Match`` and 304s are answered from the store.
         """
         url = build_url(join_url(self.base_url, path), params)
         send_headers = dict(self.headers)
@@ -52,8 +54,18 @@ class HttpClient:
         if json is not None:
             body = _json.dumps(json).encode("utf-8")
             send_headers.setdefault("Content-Type", "application/json")
-        response = self._send_with_retries(method.upper(), url, send_headers, body,
+        method = method.upper()
+        cache_key = url if method == "GET" and self.cache is not None else None
+        if cache_key is not None:
+            for name, value in self.cache.conditional_headers(cache_key).items():
+                send_headers.setdefault(name, value)
+        response = self._send_with_retries(method, url, send_headers, body,
                                            self.timeout if timeout is None else timeout)
+        if cache_key is not None:
+            if response.status == 304 and cache_key in self.cache:
+                response = self.cache.revalidated(cache_key, response)
+            else:
+                self.cache.store(cache_key, response)
         if raise_for_status:
             response.raise_for_status()
         return response
