@@ -52,14 +52,48 @@ class Handler(BaseHTTPRequestHandler):
         return values[0] if values else default
 
     # -- routes -----------------------------------------------------------
+    def _json_body(self):
+        try:
+            return json.loads(self.body or b"{}")
+        except ValueError:
+            return None
+
+    def _find_item(self, wanted):
+        for item in self.server.items:
+            if item["id"] == wanted:
+                return item
+        return None
+
     def h_items(self):
-        if len(self.segments) == 2:
-            wanted = int(self.segments[1])
-            for item in ITEMS:
-                if item["id"] == wanted:
-                    return self.send_json(item)
+        """CRUD on an in-memory list. GET /items returns everything, unpaginated."""
+        if len(self.segments) == 1:
+            if self.command == "POST":
+                data = self._json_body()
+                if not isinstance(data, dict) or not data.get("name"):
+                    return self.send_json({"error": "name is required"}, 400)
+                with self.server.lock:
+                    new_id = max([i["id"] for i in self.server.items] + [0]) + 1
+                    item = {"id": new_id, "name": data["name"], "price": data.get("price", 0)}
+                    self.server.items.append(item)
+                return self.send_json(item, 201, {"Location": "/items/%d" % new_id})
+            return self.send_json(self.server.items)
+        try:
+            item = self._find_item(int(self.segments[1]))
+        except ValueError:
+            item = None
+        if item is None:
             return self.send_json({"error": "not found"}, 404)
-        self.send_json(ITEMS)
+        if self.command in ("PUT", "PATCH"):
+            data = self._json_body()
+            if not isinstance(data, dict):
+                return self.send_json({"error": "invalid JSON"}, 400)
+            item.update({k: v for k, v in data.items() if k in ("name", "price")})
+        elif self.command == "DELETE":
+            self.server.items.remove(item)
+            self.send_response(204)
+            self.end_headers()
+            return
+        self.send_json(item)
 
     def h_echo(self):
         self.send_json({
@@ -202,6 +236,7 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.items = [dict(i) for i in ITEMS]
         self.httpd.lock = threading.Lock()
         self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05},
                                        daemon=True)
