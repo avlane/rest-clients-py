@@ -64,6 +64,9 @@ class Response:
         return self.content.decode(charset, "replace")
 
     def json(self):
+        """Decode the body. An empty body (204, HEAD) gives None instead of an error."""
+        if not self.content.strip():
+            return None
         try:
             return _json.loads(self.text)
         except ValueError:

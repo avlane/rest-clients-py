@@ -64,6 +64,22 @@ class UrllibClientTests(unittest.TestCase):
         self.assertEqual(resp.status, 418)
         self.assertFalse(resp.ok)
 
+    def test_delete_returns_empty_json(self):
+        created = self.client.post("/items", json={"name": "tmp"}).json()
+        resp = self.client.delete("/items/%d" % created["id"])
+        self.assertEqual(resp.status, 204)
+        self.assertIsNone(resp.json())
+
+    def test_head_request_has_headers_but_no_body(self):
+        resp = self.client.request("HEAD", "/items/1")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.content, b"")
+        self.assertEqual(resp.headers["Content-Type"], "application/json")
+
+    def test_context_manager(self):
+        with UrllibClient(base_url=self.server.url) as client:
+            self.assertEqual(client.get_json("/items/1")["id"], 1)
+
     def test_absolute_url_ignores_base(self):
         other = UrllibClient(base_url="http://invalid.example")
         self.assertEqual(other.get_json(self.server.url + "/items/1")["id"], 1)

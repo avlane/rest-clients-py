@@ -34,6 +34,15 @@ class HttpClient:
         self.headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
         self.headers.update(headers or {})
 
+    def close(self):
+        """Release transport resources. Subclasses with sessions override this."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
     # -- public API -------------------------------------------------------
     def request(self, method, path, params=None, headers=None, json=None, data=None,
                 timeout=None, raise_for_status=True, auth=None):
