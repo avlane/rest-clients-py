@@ -6,6 +6,7 @@ clients behave the same way.
 """
 import json as _json
 import time
+from urllib.parse import urlencode
 
 from restclients.errors import TransportError
 from restclients.response import Response
@@ -45,11 +46,11 @@ class HttpClient:
 
     # -- public API -------------------------------------------------------
     def request(self, method, path, params=None, headers=None, json=None, data=None,
-                timeout=None, raise_for_status=True, auth=None):
+                timeout=None, raise_for_status=True, auth=None, form=None):
         """Send a request and return a :class:`Response`.
 
-        ``json`` is encoded as the body (with a Content-Type); ``data`` is sent
-        as raw bytes. Error statuses raise unless ``raise_for_status`` is False.
+        ``json`` is encoded as the body (with a Content-Type); ``form`` is sent
+        as application/x-www-form-urlencoded; ``data`` is sent as raw bytes. Error statuses raise unless ``raise_for_status`` is False.
         ``auth`` (or the client's default) signs the request. With a ``cache``, GETs
         are revalidated using ``If-None-Match`` and 304s are answered from the store.
         """
@@ -63,6 +64,9 @@ class HttpClient:
         if json is not None:
             body = _json.dumps(json).encode("utf-8")
             send_headers.setdefault("Content-Type", "application/json")
+        elif form is not None:
+            body = urlencode(form).encode("ascii")
+            send_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
         method = method.upper()
         cache_key = url if method == "GET" and self.cache is not None else None
         if cache_key is not None:

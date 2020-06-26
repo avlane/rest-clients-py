@@ -9,7 +9,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote_plus, urlsplit
 
 ITEMS = [{"id": n, "name": "item-%02d" % n, "price": n * 5} for n in range(1, 24)]
 
@@ -226,6 +226,47 @@ class Handler(BaseHTTPRequestHandler):
         self._count("etag-200")
         self.send_json({"version": version, "payload": "x" * 200}, headers={"ETag": etag})
 
+    def h_oauth(self):
+        """Minimal OAuth2 authorization server plus a protected resource."""
+        action = self.segments[1] if len(self.segments) > 1 else ""
+        if action == "token" and self.command == "POST":
+            return self._oauth_token()
+        if action == "revoke-all" and self.command == "POST":
+            self.server.valid_tokens.clear()
+            return self.send_json({"revoked": True})
+        if action == "me":
+            auth = self.headers.get("Authorization", "")
+            token = auth[7:] if auth.startswith("Bearer ") else None
+            if token not in self.server.valid_tokens:
+                return self._challenge("Bearer", ' error="invalid_token"')
+            return self.send_json({"client": self.server.valid_tokens[token]})
+        self.send_json({"error": "not found"}, 404)
+
+    def _oauth_token(self):
+        form = parse_qs(self.body.decode("utf-8"))
+        client_id = client_secret = None
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Basic "):
+            raw = base64.b64decode(auth[6:]).decode("utf-8")
+            client_id, _, client_secret = raw.partition(":")
+            client_id, client_secret = unquote_plus(client_id), unquote_plus(client_secret)
+        elif "client_id" in form:
+            client_id = form["client_id"][0]
+            client_secret = form.get("client_secret", [""])[0]
+        if (client_id, client_secret) != ("svc-reports", "shh"):
+            return self.send_json({"error": "invalid_client"}, 401,
+                                  {"WWW-Authenticate": 'Basic realm="oauth"'})
+        grant = form.get("grant_type", [""])[0]
+        if grant != "client_credentials":
+            return self.send_json({"error": "unsupported_grant_type"}, 400)
+        n = self._count("tokens-issued")
+        token = "at-%d" % n
+        self.server.valid_tokens[token] = client_id
+        self.send_json({"access_token": token, "token_type": "Bearer",
+                        "expires_in": self.server.token_ttl,
+                        "scope": form.get("scope", [""])[0]},
+                       headers={"Cache-Control": "no-store"})
+
     # ROUTES-END
 
 
@@ -236,6 +277,8 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.valid_tokens = {}
+        self.httpd.token_ttl = 3600
         self.httpd.items = [dict(i) for i in ITEMS]
         self.httpd.lock = threading.Lock()
         self.thread = threading.Thread(target=self.httpd.serve_forever, kwargs={"poll_interval": 0.05},
