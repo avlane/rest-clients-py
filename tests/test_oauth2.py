@@ -83,5 +83,42 @@ class ClientCredentialsTests(unittest.TestCase):
         self.assertEqual(creds.token().access_token, "at-2")
 
 
+class RefreshOn401Tests(unittest.TestCase):
+    def setUp(self):
+        self.server = ApiServer().__enter__()
+        self.creds = ClientCredentials(self.server.url + "/oauth/token", "svc-reports", "shh")
+        self.api = UrllibClient(base_url=self.server.url, auth=self.creds)
+
+    def tearDown(self):
+        self.server.__exit__(None, None, None)
+
+    def test_revoked_token_is_replaced_transparently(self):
+        self.api.get("/oauth/me")
+        self.api.post("/oauth/revoke-all")
+        self.assertEqual(self.api.get_json("/oauth/me"), {"client": "svc-reports"})
+        self.assertEqual(self.server.counters["tokens-issued"], 2)
+
+    def test_only_one_retry_per_request(self):
+        class Rejecting(ClientCredentials):
+            def _fetch(self):
+                token = super()._fetch()
+                self_server.httpd.valid_tokens.clear()  # the server forgets it immediately
+                return token
+
+        self_server = self.server
+        api = UrllibClient(base_url=self.server.url,
+                           auth=Rejecting(self.server.url + "/oauth/token", "svc-reports", "shh"))
+        with self.assertRaises(Unauthorized):
+            api.get("/oauth/me")
+        self.assertEqual(self.server.counters["tokens-issued"], 2)
+
+    def test_static_auth_is_not_retried(self):
+        from restclients.auth import BearerAuth
+        api = UrllibClient(base_url=self.server.url, auth=BearerAuth("nope"))
+        with self.assertRaises(Unauthorized):
+            api.get("/oauth/me")
+        self.assertEqual(len([r for r in self.server.requests if r[1] == "/oauth/me"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

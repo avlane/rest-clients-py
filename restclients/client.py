@@ -74,6 +74,12 @@ class HttpClient:
                 send_headers.setdefault(name, value)
         response = self._send_with_retries(method, url, send_headers, body,
                                            self.timeout if timeout is None else timeout)
+        if response.status == 401 and hasattr(auth, "invalidate"):
+            # The token may have been revoked or expired early: get a fresh one and try once more.
+            auth.invalidate()
+            auth.apply(send_headers)
+            response = self._send_with_retries(method, url, send_headers, body,
+                                               self.timeout if timeout is None else timeout)
         if cache_key is not None:
             if response.status == 304 and cache_key in self.cache:
                 response = self.cache.revalidated(cache_key, response)
