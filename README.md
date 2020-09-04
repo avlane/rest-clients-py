@@ -4,22 +4,52 @@ Notes and code from learning how to consume REST APIs from Python: first with
 the standard library (`urllib.request` and `json`), then with the HTTP
 libraries people actually reach for.
 
+## How the code is tested
+
+`tests/server.py` starts a real HTTP server (`ThreadingHTTPServer`) on
+localhost. It serves JSON, three kinds of pagination, Basic/Bearer/API key
+challenges, flaky 503s, 429s with `Retry-After`, dropped connections, ETags
+and an OAuth2 token endpoint.
+
+| code path | how it is tested |
+|---|---|
+| `urllib.request` (`UrllibClient`, `basics`) | for real, over sockets, against the local server |
+| `requests` (`RequestsClient`) | **against a fake session** |
+
+Everything that is not transport specific (retries, rate limiting, caching,
+pagination, auth, OAuth2) lives in `HttpClient` and the helper modules, so the
+real-server tests exercise it through the urllib client, and the fake-session
+tests check that the requests client shares it.
+
+Run the tests with `python3 -m unittest discover`.
+
 ## Layout
 
 - `restclients/basics.py` the plain `urllib.request` + `json` function
-- `restclients/client.py` `HttpClient`: base URL, default headers, JSON bodies, status checks
-- `restclients/urllib_client.py` the client on `urllib.request`
-- `restclients/requests_client.py` the same client on a `requests` session
+- `restclients/client.py` `HttpClient`: base URL, default headers, JSON and form bodies,
+  status checks, retries, rate limiting, ETag caching, auth
+- `restclients/urllib_client.py`, `restclients/requests_client.py` the transports
 - `restclients/errors.py` one exception class per kind of failure
-- `tests/` stdlib `unittest` tests; run `python3 -m unittest discover`
+- `restclients/pagination.py` page/limit, `Link` header and cursor iterators
+- `restclients/retry.py` backoff with jitter and `Retry-After` parsing
+- `restclients/ratelimit.py` token bucket
+- `restclients/etag_cache.py` response store for `If-None-Match`
+- `restclients/auth.py`, `restclients/oauth2.py` Basic, Bearer, API key, client credentials
+- `restclients/base.py` `ApiClient`, a base class for per-API clients (see `examples/`)
+- `restclients/testing.py` fake sessions for tests that must not touch the network
 
-## How the code is tested
+## Notes
 
-`tests/server.py` starts a real HTTP server on localhost and the urllib client
-talks to it over real sockets. The `requests` client is tested against a fake session (`tests/fakes.py`).
+**Timeouts.** `requests` has no default timeout: a call without `timeout=` can
+hang forever. `HttpClient` always has one. A `(connect, read)` pair is passed
+straight to `requests`; `urllib` has one socket timeout, so it uses the larger
+value.
 
-## Notes on timeouts
+**Retries.** `RetryPolicy` retries `GET`, `HEAD`, `PUT`, `DELETE` and `OPTIONS`
+on connection errors and on 429/500/502/503/504, with exponential backoff and
+full jitter. `POST` is not retried, because repeating it could do the work twice.
+A `Retry-After` header (seconds or HTTP-date) raises the wait; if it asks for
+longer than `max_retry_after` the error is raised instead.
 
-`requests` has no default timeout: a call without `timeout=` can hang forever.
-`HttpClient` always has one. A `(connect, read)` pair is passed straight to
-`requests`; `urllib` has one socket timeout, so it uses the larger value.
+**Caching.** `ResponseCache` revalidates every GET with `If-None-Match`; a 304
+is answered from the stored body. It does not do freshness lifetimes.
