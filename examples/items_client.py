@@ -1,5 +1,8 @@
 """A client for the test server's /items API, built on restclients.base.ApiClient."""
-from typing import Any, Dict, Iterator, Optional
+from __future__ import annotations
+
+from collections.abc import Iterator
+from typing import Optional
 
 from restclients.base import ApiClient, JsonObject
 from restclients.errors import NotFound
