@@ -12,6 +12,15 @@ class ApiError(Exception):
         self.body = body
         self.headers = headers or {}
 
+    @property
+    def data(self):
+        """The error body decoded as JSON, or None if it is not JSON."""
+        import json
+        try:
+            return json.loads(self.body) if self.body else None
+        except (TypeError, ValueError):
+            return None
+
     def __str__(self):
         if self.status is None:
             return self.message
@@ -95,7 +104,12 @@ def _header(headers, name):
 
 
 def _summarize(body):
-    """Short human readable text from an error body (JSON ``error`` or raw text)."""
+    """Short human readable text from an error body.
+
+    APIs disagree on the shape, so this tries the common ones: a string under
+    ``error``/``message``/``detail``/``title``, a nested ``{"error": {"message": ...}}``,
+    and a list of ``errors``. Anything else falls back to the raw text.
+    """
     if not body:
         return ""
     text = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
@@ -104,8 +118,20 @@ def _summarize(body):
         data = json.loads(text)
     except ValueError:
         return text.strip()[:200]
+    found = _message_from(data)
+    return found if found else text.strip()[:200]
+
+
+def _message_from(data):
+    if isinstance(data, str):
+        return data
+    if isinstance(data, list):
+        parts = [m for m in (_message_from(item) for item in data) if m]
+        return "; ".join(parts)
     if isinstance(data, dict):
-        for key in ("error", "message", "detail", "title"):
-            if isinstance(data.get(key), str):
-                return data[key]
-    return text.strip()[:200]
+        for key in ("message", "detail", "error_description", "title", "error"):
+            found = _message_from(data.get(key))
+            if found:
+                return found
+        return _message_from(data.get("errors"))
+    return ""

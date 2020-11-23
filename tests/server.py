@@ -267,6 +267,26 @@ class Handler(BaseHTTPRequestHandler):
                         "scope": form.get("scope", [""])[0]},
                        headers={"Cache-Control": "no-store"})
 
+    def h_errors(self):
+        """Error bodies in the shapes different APIs use."""
+        shape = self.q("shape", "plain")
+        bodies = {
+            "nested": {"error": {"code": 42, "message": "nested message"}},
+            "list": {"errors": [{"message": "name is too short"}, {"message": "price must be positive"}]},
+            "oauth": {"error": "invalid_request", "error_description": "missing parameter"},
+            "problem": {"type": "about:blank", "title": "Unprocessable", "status": 422,
+                        "detail": "quantity must be positive"},
+        }
+        status = int(self.q("status", 422))
+        if shape == "text":
+            body = b"plain text failure"
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
+        self.send_json(bodies[shape], status)
+
     # ROUTES-END
 
 
