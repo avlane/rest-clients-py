@@ -1,3 +1,5 @@
 # Only needed for restclients.requests_client when no session is injected.
 # The standard-library clients and all tests need nothing beyond Python.
 requests>=2.24.0
+# Only needed for restclients.httpx_client when no client is injected.
+httpx>=0.16.1

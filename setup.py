@@ -9,7 +9,7 @@ setup(
     packages=find_packages(exclude=["tests", "tests.*", "examples"]),
     python_requires=">=3.7",
     install_requires=[],  # the core runs on the standard library alone
-    extras_require={"requests": ["requests>=2.24.0"]},
+    extras_require={"requests": ["requests>=2.24.0"], "httpx": ["httpx>=0.16.1"]},
     classifiers=[
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",

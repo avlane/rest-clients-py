@@ -1,5 +1,7 @@
 """Test doubles for code that takes an injected ``requests``-style session.
 
+The same fake also stands in for an ``httpx.Client`` (same ``request`` shape).
+
 ``RequestsClient`` never imports ``requests`` when it is given a session, so a
 ``FakeSession`` is all a unit test needs. Responses can be queued in order, or
 registered per (method, url) with ``respond``. Every call is recorded.
@@ -44,7 +46,9 @@ class FakeSession:
         self.routes.setdefault((method.upper(), url), []).extend(responses)
         return self
 
-    def request(self, method, url, headers=None, data=None, timeout=None, **kwargs):
+    def request(self, method, url, headers=None, data=None, timeout=None, content=None, **kwargs):
+        if data is None:
+            data = content  # httpx names the raw body "content"
         self.calls.append({"method": method, "url": url, "headers": headers,
                            "data": data, "timeout": timeout, **kwargs})
         scripted = self.routes.get((method.upper(), url))
