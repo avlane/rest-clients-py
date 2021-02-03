@@ -16,7 +16,52 @@ from restclients.urls import build_url, join_url
 USER_AGENT = "rest-clients-py/0.1"
 
 
-class HttpClient:
+class PreparedRequest:
+    """Everything a transport needs to send one request."""
+
+    def __init__(self, method, url, headers, body, timeout, auth=None):
+        self.method = method
+        self.url = url
+        self.headers = headers
+        self.body = body
+        self.timeout = timeout
+        self.auth = auth
+
+
+class RequestBuilder:
+    """Turns (path, params, json, ...) into a PreparedRequest.
+
+    Shared by the synchronous and asynchronous clients, so that URL joining,
+    default headers, body encoding and auth are written once.
+    """
+
+    def __init__(self, base_url="", headers=None, timeout=10.0, auth=None):
+        self.base_url = base_url
+        self.auth = auth
+        self.timeout = timeout
+        self.headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
+        self.headers.update(headers or {})
+
+    def prepare(self, method, path, params=None, headers=None, json=None, data=None,
+                timeout=None, auth=None, form=None):
+        url = build_url(join_url(self.base_url, path), params)
+        send_headers = dict(self.headers)
+        send_headers.update(headers or {})
+        auth = auth or self.auth
+        if auth is not None:
+            auth.apply(send_headers)
+        body = data
+        if json is not None:
+            body = _json.dumps(json).encode("utf-8")
+            send_headers.setdefault("Content-Type", "application/json")
+        elif form is not None:
+            body = urlencode(form).encode("ascii")
+            send_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        return PreparedRequest(method.upper(), url, send_headers, body,
+                               self.timeout if timeout is None else timeout, auth)
+
+
+class HttpClient(RequestBuilder):
     """Base class.
 
     ``timeout`` is seconds, or a ``(connect, read)`` pair. Unlike requests,
@@ -25,15 +70,11 @@ class HttpClient:
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
                  sleep=time.sleep, rate_limiter=None, cache=None):
+        super().__init__(base_url, headers, timeout, auth)
         self.cache = cache
         self.retry = retry
         self.rate_limiter = rate_limiter
         self._sleep = sleep
-        self.base_url = base_url
-        self.auth = auth
-        self.timeout = timeout
-        self.headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
-        self.headers.update(headers or {})
 
     def close(self):
         """Release transport resources. Subclasses with sessions override this."""
@@ -50,36 +91,24 @@ class HttpClient:
         """Send a request and return a :class:`Response`.
 
         ``json`` is encoded as the body (with a Content-Type); ``form`` is sent
-        as application/x-www-form-urlencoded; ``data`` is sent as raw bytes. Error statuses raise unless ``raise_for_status`` is False.
-        ``auth`` (or the client's default) signs the request. With a ``cache``, GETs
-        are revalidated using ``If-None-Match`` and 304s are answered from the store.
+        as application/x-www-form-urlencoded; ``data`` is sent as raw bytes. Error
+        statuses raise unless ``raise_for_status`` is False. ``auth`` (or the
+        client's default) signs the request. With a ``cache``, GETs are
+        revalidated using ``If-None-Match`` and 304s are answered from the store.
         """
-        url = build_url(join_url(self.base_url, path), params)
-        send_headers = dict(self.headers)
-        send_headers.update(headers or {})
-        auth = auth or self.auth
-        if auth is not None:
-            auth.apply(send_headers)
-        body = data
-        if json is not None:
-            body = _json.dumps(json).encode("utf-8")
-            send_headers.setdefault("Content-Type", "application/json")
-        elif form is not None:
-            body = urlencode(form).encode("ascii")
-            send_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
-        method = method.upper()
+        prepared = self.prepare(method, path, params, headers, json, data, timeout, auth, form)
+        method, url, send_headers = prepared.method, prepared.url, prepared.headers
+        body, timeout, auth = prepared.body, prepared.timeout, prepared.auth
         cache_key = url if method == "GET" and self.cache is not None else None
         if cache_key is not None:
             for name, value in self.cache.conditional_headers(cache_key).items():
                 send_headers.setdefault(name, value)
-        response = self._send_with_retries(method, url, send_headers, body,
-                                           self.timeout if timeout is None else timeout)
+        response = self._send_with_retries(method, url, send_headers, body, timeout)
         if response.status == 401 and hasattr(auth, "invalidate"):
             # The token may have been revoked or expired early: get a fresh one and try once more.
             auth.invalidate()
             auth.apply(send_headers)
-            response = self._send_with_retries(method, url, send_headers, body,
-                                               self.timeout if timeout is None else timeout)
+            response = self._send_with_retries(method, url, send_headers, body, timeout)
         if cache_key is not None:
             if response.status == 304 and cache_key in self.cache:
                 response = self.cache.revalidated(cache_key, response)

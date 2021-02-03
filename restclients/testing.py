@@ -72,3 +72,14 @@ class FakeSession:
     def sent_json(self, index=-1):
         """The decoded JSON body of one recorded call."""
         return _json.loads(self.calls[index]["data"].decode("utf-8"))
+
+
+class FakeAsyncSession(FakeSession):
+    """Like FakeSession, but ``request`` and ``aclose`` are coroutines (httpx.AsyncClient)."""
+
+    async def request(self, method, url, headers=None, data=None, timeout=None, content=None,
+                      **kwargs):
+        return super().request(method, url, headers, data, timeout, content, **kwargs)
+
+    async def aclose(self):
+        self.closed = True
