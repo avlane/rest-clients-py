@@ -108,8 +108,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json({"error": "status %d requested" % code}, code)
 
     def h_slow(self):
-        time.sleep(float(self.q("delay", "0.5")))
-        self.send_json({"slept": True})
+        with self.server.lock:
+            self.server.in_flight += 1
+            self.server.max_in_flight = max(self.server.max_in_flight, self.server.in_flight)
+        try:
+            time.sleep(float(self.q("delay", "0.5")))
+        finally:
+            with self.server.lock:
+                self.server.in_flight -= 1
+        self.send_json({"slept": True, "n": self.q("n")})
 
     def h_html(self):
         body = b"<html><body>not json</body></html>"
@@ -297,6 +304,8 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.in_flight = 0
+        self.httpd.max_in_flight = 0
         self.httpd.valid_tokens = {}
         self.httpd.token_ttl = 3600
         self.httpd.items = [dict(i) for i in ITEMS]
@@ -307,6 +316,10 @@ class ApiServer:
     @property
     def url(self):
         return "http://127.0.0.1:%d" % self.httpd.server_address[1]
+
+    @property
+    def max_in_flight(self):
+        return self.httpd.max_in_flight
 
     @property
     def counters(self):
