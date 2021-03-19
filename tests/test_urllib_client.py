@@ -88,7 +88,7 @@ class UrllibClientTests(unittest.TestCase):
         client = UrllibClient(base_url=self.server.url, timeout=(0.1, 0.3))
         with self.assertRaises(errors.TransportError):
             client.get("/slow", params={"delay": 1})
-        self.assertEqual(client.get_json("/slow", params={"delay": 0.05}), {"slept": True})
+        self.assertTrue(client.get_json("/slow", params={"delay": 0.05})["slept"])
 
 
 if __name__ == "__main__":

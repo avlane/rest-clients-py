@@ -1,0 +1,28 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "rest-clients-py"
+version = "0.4.0"
+description = "Notes and small building blocks for consuming REST APIs from Python"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Avery Lane" }]
+requires-python = ">=3.7"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+]
+# The core runs on the standard library alone.
+dependencies = []
+
+[project.optional-dependencies]
+requests = ["requests>=2.25.0"]
+httpx = ["httpx>=0.16.1"]
+
+[tool.flit.module]
+name = "restclients"
