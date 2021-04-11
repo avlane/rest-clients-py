@@ -83,3 +83,42 @@ class FakeAsyncSession(FakeSession):
 
     async def aclose(self):
         self.closed = True
+
+
+class _FakeAiohttpResponse:
+    """The object ``async with session.request(...)`` yields in aiohttp."""
+
+    def __init__(self, fake):
+        self.status = fake.status_code
+        self.headers = fake.headers
+        self._body = fake.content
+
+    async def read(self):
+        return self._body
+
+
+class _FakeRequestContext:
+    def __init__(self, outcome):
+        self._outcome = outcome
+
+    async def __aenter__(self):
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return _FakeAiohttpResponse(self._outcome)
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class FakeAiohttpSession(FakeSession):
+    """Stands in for aiohttp.ClientSession: ``request`` returns an async context manager."""
+
+    def request(self, method, url, headers=None, data=None, timeout=None, **kwargs):
+        try:
+            outcome = super().request(method, url, headers, data, timeout, **kwargs)
+        except Exception as exc:  # scripted exceptions are raised when entering the context
+            outcome = exc
+        return _FakeRequestContext(outcome)
+
+    async def close(self):
+        self.closed = True

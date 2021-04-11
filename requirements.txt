@@ -3,3 +3,5 @@
 requests>=2.25.0
 # Only needed for restclients.httpx_client when no client is injected.
 httpx>=0.16.1
+# Only needed for restclients.aiohttp_client when no session is injected.
+aiohttp>=3.7.3

@@ -23,6 +23,7 @@ dependencies = []
 [project.optional-dependencies]
 requests = ["requests>=2.25.0"]
 httpx = ["httpx>=0.16.1"]
+aiohttp = ["aiohttp>=3.7.3"]
 
 [tool.flit.module]
 name = "restclients"
