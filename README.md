@@ -15,11 +15,16 @@ and an OAuth2 token endpoint.
 |---|---|
 | `urllib.request` (`UrllibClient`, `basics`) | for real, over sockets, against the local server |
 | `requests` (`RequestsClient`) | **against a fake session** |
+| `httpx` (`HttpxClient`, `AsyncHttpxClient`) | **against fakes** |
+| `aiohttp` (`AiohttpClient`) | **against a fake session** |
+| `asyncio` (`ThreadedAsyncClient`, `gather_bounded`) | for real: the urllib client driven from an event loop against the local server |
 
 Everything that is not transport specific (retries, rate limiting, caching,
 pagination, auth, OAuth2) lives in `HttpClient` and the helper modules, so the
 real-server tests exercise it through the urllib client, and the fake-session
 tests check that the requests client shares it.
+
+See `docs/library-comparison.md` for how the four libraries differ.
 
 Run the tests with `python3 -m unittest discover`.
 
@@ -28,7 +33,8 @@ Run the tests with `python3 -m unittest discover`.
 - `restclients/basics.py` the plain `urllib.request` + `json` function
 - `restclients/client.py` `HttpClient`: base URL, default headers, JSON and form bodies,
   status checks, retries, rate limiting, ETag caching, auth
-- `restclients/urllib_client.py`, `restclients/requests_client.py` the transports
+- `restclients/urllib_client.py`, `requests_client.py`, `httpx_client.py` the sync transports
+- `restclients/async_client.py`, `aiohttp_client.py` the async transports; `concurrency.py` bounded gather
 - `restclients/errors.py` one exception class per kind of failure
 - `restclients/pagination.py` page/limit, `Link` header and cursor iterators
 - `restclients/retry.py` backoff with jitter and `Retry-After` parsing
