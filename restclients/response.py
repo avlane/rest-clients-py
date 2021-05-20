@@ -80,3 +80,46 @@ class Response:
 
     def __repr__(self):
         return "<Response %s %s>" % (self.status, self.url)
+
+
+class StreamResponse:
+    """A response whose body has not been read yet.
+
+    Use it as a context manager so the connection is always released::
+
+        with client.stream("GET", "/big") as resp:
+            for chunk in resp.iter_bytes():
+                ...
+    """
+
+    def __init__(self, status, headers, raw, url=None):
+        self.status = status
+        self.headers = headers if isinstance(headers, Headers) else Headers(headers)
+        self.url = url
+        self._raw = raw          # anything with read(n) and close()
+        self.bytes_read = 0
+
+    @property
+    def content_length(self):
+        value = self.headers.get("Content-Length")
+        return int(value) if value and value.isdigit() else None
+
+    def iter_bytes(self, chunk_size=65536):
+        while True:
+            chunk = self._raw.read(chunk_size)
+            if not chunk:
+                return
+            self.bytes_read += len(chunk)
+            yield chunk
+
+    def read(self):
+        return b"".join(self.iter_bytes())
+
+    def close(self):
+        self._raw.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()

@@ -4,7 +4,7 @@ import urllib.request
 
 from restclients.client import HttpClient
 from restclients.errors import TransportError
-from restclients.response import Response
+from restclients.response import Response, StreamResponse
 
 
 def socket_timeout(timeout):
@@ -27,6 +27,19 @@ class UrllibClient(HttpClient):
                 return Response(exc.code, list(exc.headers.items()), exc.read(), url)
             finally:
                 exc.close()
+        except urllib.error.URLError as exc:
+            raise TransportError("cannot reach %s: %s" % (url, exc.reason), url=url) from None
+        except OSError as exc:
+            raise TransportError("%s while talking to %s" % (exc or type(exc).__name__, url),
+                                 url=url) from None
+
+    def _open_stream(self, method, url, headers, body, timeout):
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            resp = urllib.request.urlopen(req, timeout=socket_timeout(timeout))
+            return StreamResponse(resp.status, list(resp.headers.items()), resp, url)
+        except urllib.error.HTTPError as exc:
+            return StreamResponse(exc.code, list(exc.headers.items()), exc, url)
         except urllib.error.URLError as exc:
             raise TransportError("cannot reach %s: %s" % (url, exc.reason), url=url) from None
         except OSError as exc:

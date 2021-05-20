@@ -14,6 +14,12 @@ from urllib.parse import parse_qs, unquote_plus, urlsplit
 ITEMS = [{"id": n, "name": "item-%02d" % n, "price": n * 5} for n in range(1, 24)]
 
 
+def blob(size):
+    """The bytes /blob/<size> serves."""
+    pattern = b"0123456789abcdef"
+    return (pattern * (size // len(pattern) + 1))[:size]
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "TestApi/1.0"
 
@@ -32,7 +38,10 @@ class Handler(BaseHTTPRequestHandler):
         handler = getattr(self, name.replace("-", "_"), None)
         if handler is None:
             return self.send_json({"error": "no such route"}, 404)
-        handler()
+        try:
+            handler()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True  # the client gave up (e.g. a timeout test)
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = _dispatch
 
@@ -293,6 +302,23 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return self.wfile.write(body)
         self.send_json(bodies[shape], status)
+
+    def h_blob(self):
+        """GET /blob/<size>: deterministic bytes. ``?cut=N`` hangs up after N bytes."""
+        size = int(self.segments[1])
+        data = blob(size)
+        cut = self.q("cut")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(size))
+        self.send_header("ETag", '"blob-%d"' % size)
+        self.end_headers()
+        if cut is not None:
+            self.wfile.write(data[:int(cut)])
+            self.wfile.flush()
+            self.close_connection = True
+            return
+        self.wfile.write(data)
 
     # ROUTES-END
 

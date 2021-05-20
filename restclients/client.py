@@ -8,7 +8,7 @@ import json as _json
 import time
 from urllib.parse import urlencode
 
-from restclients.errors import TransportError
+from restclients.errors import TransportError, error_for_status
 from restclients.response import Response
 from restclients.retry import parse_retry_after
 from restclients.urls import build_url, join_url
@@ -136,6 +136,24 @@ class HttpClient(RequestBuilder):
     def get_json(self, path, params=None, **kwargs):
         return self.get(path, params=params, **kwargs).json()
 
+    def stream(self, method, path, params=None, headers=None, json=None, data=None,
+               timeout=None, raise_for_status=True, auth=None):
+        """Open a request and return a :class:`StreamResponse` without reading the body.
+
+        Streams are not retried (the caller may already have consumed part of
+        one) but they do count against the rate limiter.
+        """
+        prepared = self.prepare(method, path, params, headers, json, data, timeout, auth)
+        if self.rate_limiter is not None:
+            self.rate_limiter.acquire()
+        response = self._open_stream(prepared.method, prepared.url, prepared.headers,
+                                     prepared.body, prepared.timeout)
+        if raise_for_status and response.status >= 400:
+            with response:
+                body = response.read()
+            raise error_for_status(response.status, prepared.url, body, response.headers.as_dict())
+        return response
+
     def _send_with_retries(self, method, url, headers, body, timeout):
         policy = self.retry
         attempt = 0
@@ -163,3 +181,6 @@ class HttpClient(RequestBuilder):
     # -- to be provided by subclasses --------------------------------------
     def _send(self, method, url, headers, body, timeout):
         raise NotImplementedError
+
+    def _open_stream(self, method, url, headers, body, timeout):
+        raise NotImplementedError("%s does not support streaming" % type(self).__name__)
