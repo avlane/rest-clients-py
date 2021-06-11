@@ -6,6 +6,7 @@ urllib code paths are exercised over real sockets. Routes are methods named
 """
 import base64
 import json
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -304,21 +305,42 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(bodies[shape], status)
 
     def h_blob(self):
-        """GET /blob/<size>: deterministic bytes. ``?cut=N`` hangs up after N bytes."""
+        """GET /blob/<size>: deterministic bytes.
+
+        ``?cut=N`` hangs up after N bytes of the response body. A
+        ``Range: bytes=a-`` or ``bytes=a-b`` header gets a 206 (unless ``?norange=1``).
+        """
         size = int(self.segments[1])
         data = blob(size)
-        cut = self.q("cut")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Content-Length", str(size))
-        self.send_header("ETag", '"blob-%d"' % size)
+        status, start, end = 200, 0, size
+        spec = self.headers.get("Range", "")
+        match = re.match(r"bytes=(\d+)-(\d*)$", spec)
+        headers = {"Content-Type": "application/octet-stream", "ETag": '"blob-%d"' % size,
+                   "Accept-Ranges": "bytes"}
+        if match and not self.q("norange"):
+            start = int(match.group(1))
+            end = min(size, int(match.group(2)) + 1) if match.group(2) else size
+            if start >= size:
+                self.send_response(416)
+                self.send_header("Content-Range", "bytes */%d" % size)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            status = 206
+            headers["Content-Range"] = "bytes %d-%d/%d" % (start, end - 1, size)
+        body = data[start:end]
+        self.send_response(status)
+        headers["Content-Length"] = str(len(body))
+        for key, value in headers.items():
+            self.send_header(key, value)
         self.end_headers()
+        cut = self.q("cut")
         if cut is not None:
-            self.wfile.write(data[:int(cut)])
+            self.wfile.write(body[:int(cut)])
             self.wfile.flush()
             self.close_connection = True
             return
-        self.wfile.write(data)
+        self.wfile.write(body)
 
     # ROUTES-END
 

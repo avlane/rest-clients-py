@@ -63,5 +63,60 @@ class StreamTests(unittest.TestCase):
             self.assertIn(b"418", resp.read())
 
 
+class ResumeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ApiServer().__enter__()
+        cls.client = UrllibClient(base_url=cls.server.url)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.__exit__(None, None, None)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dest = os.path.join(self.tmp.name, "out.bin")
+
+    def read_dest(self):
+        with open(self.dest, "rb") as f:
+            return f.read()
+
+    def test_range_request_gets_206(self):
+        with self.client.stream("GET", "/blob/100", headers={"Range": "bytes=90-"}) as resp:
+            self.assertEqual(resp.status, 206)
+            self.assertEqual(resp.headers["Content-Range"], "bytes 90-99/100")
+            self.assertEqual(resp.read(), blob(100)[90:])
+
+    def test_interrupted_download_resumes(self):
+        with self.assertRaises(errors.TransportError):
+            download_file(self.client, "/blob/5000?cut=1200", self.dest, resume=True)
+        self.assertEqual(os.path.getsize(self.dest + ".part"), 1200)
+        # second attempt: the server behaves, and only the missing bytes are requested
+        written = download_file(self.client, "/blob/5000", self.dest, resume=True)
+        self.assertEqual(written, 5000)
+        self.assertEqual(self.read_dest(), blob(5000))
+        ranges = [h.get("Range") for m, p, h in self.server.requests if p.startswith("/blob/5000")]
+        self.assertEqual(ranges[-1], "bytes=1200-")
+
+    def test_server_ignoring_range_restarts_the_download(self):
+        with open(self.dest + ".part", "wb") as f:
+            f.write(b"stale bytes")
+        written = download_file(self.client, "/blob/300?norange=1", self.dest, resume=True)
+        self.assertEqual(written, 300)
+        self.assertEqual(self.read_dest(), blob(300))
+
+    def test_partial_file_that_is_already_complete(self):
+        with open(self.dest + ".part", "wb") as f:
+            f.write(blob(64))
+        self.assertEqual(download_file(self.client, "/blob/64", self.dest, resume=True), 64)
+        self.assertEqual(self.read_dest(), blob(64))
+
+    def test_failed_resume_keeps_partial_file(self):
+        with self.assertRaises(errors.TransportError):
+            download_file(self.client, "/blob/5000?cut=700", self.dest, resume=True)
+        self.assertTrue(os.path.exists(self.dest + ".part"))
+
+
 if __name__ == "__main__":
     unittest.main()
