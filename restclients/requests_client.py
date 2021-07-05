@@ -8,7 +8,7 @@ That is how the tests run without the library installed.
 from restclients._util import is_library_error
 from restclients.client import HttpClient
 from restclients.errors import TransportError
-from restclients.response import Response
+from restclients.response import IterReader, Response, StreamResponse
 
 
 class RequestsClient(HttpClient):
@@ -27,6 +27,18 @@ class RequestsClient(HttpClient):
                 raise TransportError("%s: %s" % (type(exc).__name__, exc), url=url) from None
             raise
         return Response(resp.status_code, list(resp.headers.items()), resp.content, url)
+
+    def _open_stream(self, method, url, headers, body, timeout):
+        try:
+            resp = self.session.request(method, url, headers=headers, data=body,
+                                        timeout=timeout, stream=True)
+        except Exception as exc:
+            if is_library_error(exc, "requests"):
+                raise TransportError("%s: %s" % (type(exc).__name__, exc), url=url) from None
+            raise
+        # iter_content decodes gzip/deflate; reading resp.raw directly would not
+        reader = IterReader(resp.iter_content(chunk_size=65536), resp.close)
+        return StreamResponse(resp.status_code, list(resp.headers.items()), reader, url)
 
     def close(self):
         close = getattr(self.session, "close", None)

@@ -7,7 +7,7 @@ requests, which is why this file is almost a copy of ``requests_client.py``.
 from restclients._util import is_library_error
 from restclients.client import HttpClient
 from restclients.errors import TransportError
-from restclients.response import Response
+from restclients.response import IterReader, Response, StreamResponse
 
 
 class HttpxClient(HttpClient):
@@ -26,6 +26,17 @@ class HttpxClient(HttpClient):
                 raise TransportError("%s: %s" % (type(exc).__name__, exc), url=url) from None
             raise
         return Response(resp.status_code, list(resp.headers.items()), resp.content, url)
+
+    def _open_stream(self, method, url, headers, body, timeout):
+        context = self.client.stream(method, url, headers=headers, content=body, timeout=timeout)
+        try:
+            resp = context.__enter__()
+        except Exception as exc:
+            if is_library_error(exc, "httpx"):
+                raise TransportError("%s: %s" % (type(exc).__name__, exc), url=url) from None
+            raise
+        reader = IterReader(resp.iter_bytes(), lambda: context.__exit__(None, None, None))
+        return StreamResponse(resp.status_code, list(resp.headers.items()), reader, url)
 
     def close(self):
         close = getattr(self.client, "close", None)

@@ -123,3 +123,28 @@ class StreamResponse:
 
     def __exit__(self, *exc):
         self.close()
+
+
+class IterReader:
+    """Adapt a chunk iterator (requests' ``iter_content``, httpx's ``iter_bytes``) to ``read(n)``."""
+
+    def __init__(self, chunks, close=None):
+        self._chunks = iter(chunks)
+        self._close = close
+        self._buffer = b""
+
+    def read(self, size=-1):
+        while size < 0 or len(self._buffer) < size:
+            try:
+                self._buffer += next(self._chunks)
+            except StopIteration:
+                break
+        if size < 0:
+            data, self._buffer = self._buffer, b""
+        else:
+            data, self._buffer = self._buffer[:size], self._buffer[size:]
+        return data
+
+    def close(self):
+        if self._close is not None:
+            self._close()

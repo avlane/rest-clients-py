@@ -33,6 +33,30 @@ class FakeResponse:
     def json(self):
         return _json.loads(self.text)
 
+    def iter_content(self, chunk_size=1):
+        """requests-style streaming."""
+        for i in range(0, len(self.content), chunk_size):
+            yield self.content[i:i + chunk_size]
+
+    def iter_bytes(self, chunk_size=None):
+        """httpx-style streaming."""
+        return self.iter_content(chunk_size or 4)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeStreamContext:
+    def __init__(self, response):
+        self.response = response
+
+    def __enter__(self):
+        return self.response
+
+    def __exit__(self, *exc):
+        self.response.close()
+        return False
+
 
 class FakeSession:
     def __init__(self, responses=None):
@@ -64,6 +88,11 @@ class FakeSession:
 
     def close(self):
         self.closed = True
+
+    def stream(self, method, url, headers=None, content=None, timeout=None, **kwargs):
+        """httpx.Client.stream: a context manager that yields the response."""
+        response = self.request(method, url, headers=headers, data=content, timeout=timeout, **kwargs)
+        return _FakeStreamContext(response)
 
     # -- assertions -------------------------------------------------------
     def calls_to(self, method, url):
