@@ -5,6 +5,7 @@ urllib code paths are exercised over real sockets. Routes are methods named
 ``h_<first path segment>``; add a method to add a route.
 """
 import base64
+import hashlib
 import json
 import re
 import threading
@@ -341,6 +342,28 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return
         self.wfile.write(body)
+
+    def h_upload(self):
+        """POST multipart/form-data; answers with a summary of each part."""
+        from email import message_from_bytes
+        from email.policy import HTTP
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            return self.send_json({"error": "expected multipart/form-data"}, 415)
+        message = message_from_bytes(b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + self.body,
+                                     policy=HTTP)
+        parts = []
+        for part in message.iter_parts():
+            payload = part.get_payload(decode=True) or b""
+            parts.append({
+                "name": part.get_param("name", header="content-disposition"),
+                "filename": part.get_filename(),
+                "content_type": part.get_content_type(),
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "text": payload.decode("utf-8", "replace") if part.get_filename() is None else None,
+            })
+        self.send_json({"parts": parts}, 201)
 
     # ROUTES-END
 
