@@ -19,8 +19,9 @@ from restclients.response import Response
 
 class AsyncHttpClient(RequestBuilder):
     async def request(self, method, path, params=None, headers=None, json=None, data=None,
-                      timeout=None, raise_for_status=True, auth=None, form=None):
-        prepared = self.prepare(method, path, params, headers, json, data, timeout, auth, form)
+                      timeout=None, raise_for_status=True, auth=None, form=None, files=None):
+        prepared = self.prepare(method, path, params, headers, json, data, timeout, auth, form,
+                                files)
         response = await self._send(prepared.method, prepared.url, prepared.headers,
                                     prepared.body, prepared.timeout)
         if raise_for_status:

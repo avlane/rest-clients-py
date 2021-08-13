@@ -9,11 +9,18 @@ import time
 from urllib.parse import urlencode
 
 from restclients.errors import TransportError, error_for_status
+from restclients.multipart import FilePart, encode_multipart
 from restclients.response import Response
 from restclients.retry import parse_retry_after
 from restclients.urls import build_url, join_url
 
 USER_AGENT = "rest-clients-py/0.1"
+
+
+def _as_file_parts(files):
+    """Accept ``{"field": FilePart}`` or ``{"field": (filename, bytes[, content_type])}``."""
+    pairs = files.items() if hasattr(files, "items") else files
+    return [(name, part if isinstance(part, FilePart) else FilePart(*part)) for name, part in pairs]
 
 
 class PreparedRequest:
@@ -43,7 +50,7 @@ class RequestBuilder:
         self.headers.update(headers or {})
 
     def prepare(self, method, path, params=None, headers=None, json=None, data=None,
-                timeout=None, auth=None, form=None):
+                timeout=None, auth=None, form=None, files=None):
         url = build_url(join_url(self.base_url, path), params)
         send_headers = dict(self.headers)
         send_headers.update(headers or {})
@@ -51,7 +58,11 @@ class RequestBuilder:
         if auth is not None:
             auth.apply(send_headers)
         body = data
-        if json is not None:
+        if files:
+            # text fields (``form``) and files travel together in one multipart body
+            body, content_type = encode_multipart(form, _as_file_parts(files))
+            send_headers["Content-Type"] = content_type
+        elif json is not None:
             body = _json.dumps(json).encode("utf-8")
             send_headers.setdefault("Content-Type", "application/json")
         elif form is not None:
@@ -87,16 +98,18 @@ class HttpClient(RequestBuilder):
 
     # -- public API -------------------------------------------------------
     def request(self, method, path, params=None, headers=None, json=None, data=None,
-                timeout=None, raise_for_status=True, auth=None, form=None):
+                timeout=None, raise_for_status=True, auth=None, form=None, files=None):
         """Send a request and return a :class:`Response`.
 
         ``json`` is encoded as the body (with a Content-Type); ``form`` is sent
-        as application/x-www-form-urlencoded; ``data`` is sent as raw bytes. Error
+        as application/x-www-form-urlencoded; ``files`` makes it a multipart upload
+        (``form`` then supplies the text fields); ``data`` is sent as raw bytes. Error
         statuses raise unless ``raise_for_status`` is False. ``auth`` (or the
         client's default) signs the request. With a ``cache``, GETs are
         revalidated using ``If-None-Match`` and 304s are answered from the store.
         """
-        prepared = self.prepare(method, path, params, headers, json, data, timeout, auth, form)
+        prepared = self.prepare(method, path, params, headers, json, data, timeout, auth, form,
+                               files)
         method, url, send_headers = prepared.method, prepared.url, prepared.headers
         body, timeout, auth = prepared.body, prepared.timeout, prepared.auth
         cache_key = url if method == "GET" and self.cache is not None else None
