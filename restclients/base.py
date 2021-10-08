@@ -8,7 +8,7 @@ hints, and never touch the transport.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from restclients import pagination
 from restclients.client import HttpClient
@@ -36,7 +36,7 @@ class ApiClient:
             close()
 
     # -- building blocks for subclasses -----------------------------------
-    def _get(self, path: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return self.http.get_json(path, params=params)
 
     def _post(self, path: str, payload: Any = None) -> Any:
@@ -51,7 +51,7 @@ class ApiClient:
     def _delete(self, path: str) -> None:
         self.http.delete(path)
 
-    def _iterate(self, path: str, params: Optional[dict[str, Any]] = None,
+    def _iterate(self, path: str, params: dict[str, Any] | None = None,
                  **options: Any) -> Iterator[Any]:
         """Iterate over a collection using the class's pagination strategy."""
         if self.pagination == "pages":

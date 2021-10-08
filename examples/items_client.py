@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Optional
-
 from restclients.base import ApiClient, JsonObject
 from restclients.errors import NotFound
 
@@ -12,7 +10,7 @@ class ItemsClient(ApiClient):
     def get_item(self, item_id: int) -> JsonObject:
         return self._get("/items/%d" % item_id)
 
-    def find_item(self, item_id: int) -> Optional[JsonObject]:
+    def find_item(self, item_id: int) -> JsonObject | None:
         """Like get_item but returns None instead of raising NotFound."""
         try:
             return self.get_item(item_id)
