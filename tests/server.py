@@ -24,6 +24,12 @@ def blob(size):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "TestApi/1.0"
+    protocol_version = "HTTP/1.1"  # keep-alive; every response below sets Content-Length
+
+    def setup(self):
+        super().setup()
+        with self.server.lock:
+            self.server.connections += 1  # one per TCP connection, not per request
 
     def log_message(self, fmt, *args):
         pass  # keep test output quiet
@@ -375,6 +381,7 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.connections = 0
         self.httpd.in_flight = 0
         self.httpd.max_in_flight = 0
         self.httpd.valid_tokens = {}
@@ -387,6 +394,10 @@ class ApiServer:
     @property
     def url(self):
         return "http://127.0.0.1:%d" % self.httpd.server_address[1]
+
+    @property
+    def connections(self):
+        return self.httpd.connections
 
     @property
     def max_in_flight(self):

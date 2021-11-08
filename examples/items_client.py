@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+
 from restclients.base import ApiClient, JsonObject
 from restclients.errors import NotFound
 
