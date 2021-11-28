@@ -1,14 +1,15 @@
-"""HttpClient on ``http.client`` with a reused (keep-alive) connection.
+"""HttpClient on ``http.client`` with a pool of reused (keep-alive) connections.
 
 ``urllib.request`` opens a new connection for every call. ``http.client`` lets
-us keep one open per host and send many requests down it, which is what
-``requests.Session`` and ``httpx.Client`` do for you. This version holds one
-connection per origin and serialises use of it with a lock; the pooled version
-builds on it.
+us keep connections open and send many requests down each, which is what
+``requests.Session`` and ``httpx.Client`` do for you. Here every origin gets a
+``ConnectionPool`` holding at most ``max_connections`` connections; threads
+that find all of them busy wait for one to come back.
 """
 import http.client
 import socket
 import threading
+import time
 from urllib.parse import urlsplit
 
 from restclients.client import HttpClient
@@ -21,61 +22,117 @@ _STALE = (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError,
           http.client.CannotSendRequest, http.client.ResponseNotReady)
 
 
-class KeepAliveClient(HttpClient):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._connections = {}          # (scheme, netloc) -> HTTPConnection
-        self._lock = threading.Lock()
-        self.connections_opened = 0
+class PoolTimeout(Exception):
+    """No connection became free in time."""
 
-    def _new_connection(self, scheme, netloc, timeout):
-        cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
-        self.connections_opened += 1
-        return cls(netloc, timeout=timeout)
+
+class ConnectionPool:
+    """A bounded set of connections for one origin."""
+
+    def __init__(self, factory, max_size=10):
+        if max_size < 1:
+            raise ValueError("max_size must be at least 1")
+        self._factory = factory
+        self.max_size = max_size
+        self._idle = []            # most recently used last
+        self._in_use = 0
+        self._cond = threading.Condition()
+        self.opened = 0
+
+    def acquire(self, timeout=None):
+        """Return ``(connection, reused)``; waits while ``max_size`` are checked out."""
+        deadline = None if timeout is None else time.monotonic() + timeout
+        with self._cond:
+            while True:
+                if self._idle:
+                    self._in_use += 1
+                    return self._idle.pop(), True
+                if self._in_use < self.max_size:
+                    self._in_use += 1
+                    self.opened += 1
+                    return self._factory(), False
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise PoolTimeout()
+                self._cond.wait(remaining)
+
+    def release(self, conn, reusable=True):
+        with self._cond:
+            self._in_use -= 1
+            if reusable:
+                self._idle.append(conn)
+            else:
+                conn.close()
+            self._cond.notify()
+
+    def close(self):
+        with self._cond:
+            for conn in self._idle:
+                conn.close()
+            self._idle.clear()
+
+
+class KeepAliveClient(HttpClient):
+    def __init__(self, max_connections=10, pool_timeout=30.0, **kwargs):
+        super().__init__(**kwargs)
+        self.max_connections = max_connections
+        self.pool_timeout = pool_timeout
+        self._pools = {}                # (scheme, netloc) -> ConnectionPool
+        self._lock = threading.Lock()
+
+    @property
+    def connections_opened(self):
+        with self._lock:
+            return sum(pool.opened for pool in self._pools.values())
+
+    def _pool_for(self, scheme, netloc):
+        with self._lock:
+            pool = self._pools.get((scheme, netloc))
+            if pool is None:
+                cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+                pool = self._pools[(scheme, netloc)] = ConnectionPool(
+                    lambda: cls(netloc), self.max_connections)
+            return pool
 
     def _send(self, method, url, headers, body, timeout):
         parts = urlsplit(url)
-        origin = (parts.scheme, parts.netloc)
+        pool = self._pool_for(parts.scheme, parts.netloc)
         target = parts.path or "/"
         if parts.query:
             target += "?" + parts.query
         timeout = socket_timeout(timeout)
-        with self._lock:
-            for attempt in (1, 2):
-                conn = self._connections.get(origin)
-                reused = conn is not None
-                if conn is None:
-                    conn = self._connections[origin] = self._new_connection(*origin, timeout)
-                conn.timeout = timeout
-                if conn.sock is not None:
-                    conn.sock.settimeout(timeout)
-                try:
-                    conn.request(method, target, body=body, headers=headers)
-                    resp = conn.getresponse()
-                    content = resp.read()
-                except _STALE as exc:
-                    self._discard(origin)
-                    # The server may have closed an idle connection; one fresh try is safe
-                    # for idempotent methods.
-                    if attempt == 1 and reused and method in IDEMPOTENT_METHODS:
-                        continue
-                    raise TransportError("connection to %s failed: %s" % (parts.netloc, exc or
-                                         type(exc).__name__), url=url) from None
-                except (socket.timeout, OSError, http.client.HTTPException) as exc:
-                    self._discard(origin)
-                    raise TransportError("%s while talking to %s" % (exc or type(exc).__name__, url),
-                                         url=url) from None
-                if resp.will_close:
-                    self._discard(origin)
+        for attempt in (1, 2):
+            try:
+                conn, reused = pool.acquire(self.pool_timeout)
+            except PoolTimeout:
+                raise TransportError("no free connection to %s within %ss"
+                                     % (parts.netloc, self.pool_timeout), url=url) from None
+            conn.timeout = timeout
+            if conn.sock is not None:
+                conn.sock.settimeout(timeout)
+            reusable = False
+            try:
+                conn.request(method, target, body=body, headers=headers)
+                resp = conn.getresponse()
+                content = resp.read()
+                reusable = not resp.will_close
                 return Response(resp.status, resp.getheaders(), content, url)
-
-    def _discard(self, origin):
-        conn = self._connections.pop(origin, None)
-        if conn is not None:
-            conn.close()
+            except _STALE as exc:
+                # The server may have closed an idle connection; one fresh try is safe
+                # for idempotent methods.
+                if attempt == 1 and reused and method in IDEMPOTENT_METHODS:
+                    continue
+                raise TransportError("connection to %s failed: %s"
+                                     % (parts.netloc, exc or type(exc).__name__), url=url) from None
+            except (socket.timeout, OSError, http.client.HTTPException) as exc:
+                raise TransportError("%s while talking to %s" % (exc or type(exc).__name__, url),
+                                     url=url) from None
+            finally:
+                pool.release(conn, reusable)
 
     def close(self):
         with self._lock:
-            for conn in self._connections.values():
-                conn.close()
-            self._connections.clear()
+            pools = list(self._pools.values())
+            self._pools.clear()
+        for pool in pools:
+            pool.close()
