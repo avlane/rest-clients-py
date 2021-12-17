@@ -87,7 +87,7 @@ class AsyncHttpxClient(AsyncHttpClient):
         super().__init__(**kwargs)
         if client is None:
             import httpx  # lazy: only needed when the caller did not inject a client
-            client = httpx.AsyncClient()
+            client = httpx.AsyncClient(follow_redirects=True)  # see HttpxClient
         self.client = client
 
     async def _send(self, method, url, headers, body, timeout):

@@ -18,6 +18,8 @@ and an OAuth2 token endpoint.
 | `httpx` (`HttpxClient`, `AsyncHttpxClient`) | **against fakes** |
 | `aiohttp` (`AiohttpClient`) | **against a fake session** |
 | `asyncio` (`ThreadedAsyncClient`, `gather_bounded`) | for real: the urllib client driven from an event loop against the local server |
+| `http.client` (`KeepAliveClient`) | for real: connection reuse, pool limits and stale-connection recovery against the local server (which counts TCP connections) |
+| `requests`/`httpx`/`aiohttp` pool factories (`factories.py`) | wiring, with stand-in modules in `sys.modules` |
 
 Everything that is not transport specific (retries, rate limiting, caching,
 pagination, auth, OAuth2) lives in `HttpClient` and the helper modules, so the
@@ -34,7 +36,10 @@ Run the tests with `python3 -m unittest discover`.
 - `restclients/client.py` `HttpClient`: base URL, default headers, JSON and form bodies,
   status checks, retries, rate limiting, ETag caching, auth
 - `restclients/urllib_client.py`, `requests_client.py`, `httpx_client.py` the sync transports
+- `restclients/keepalive_client.py` pooled keep-alive client on `http.client`
 - `restclients/async_client.py`, `aiohttp_client.py` the async transports; `concurrency.py` bounded gather
+- `restclients/streaming.py`, `multipart.py`, `uploads.py` downloads (with resume) and uploads
+- `docs/` library comparison and connection pooling notes
 - `restclients/errors.py` one exception class per kind of failure
 - `restclients/pagination.py` page/limit, `Link` header and cursor iterators
 - `restclients/retry.py` backoff with jitter and `Retry-After` parsing

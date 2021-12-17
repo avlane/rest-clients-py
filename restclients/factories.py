@@ -30,6 +30,7 @@ def make_httpx_client(max_connections=100, max_keepalive_connections=20, **clien
 
     limits = httpx.Limits(max_connections=max_connections,
                           max_keepalive_connections=max_keepalive_connections)
+    client_options.setdefault("follow_redirects", True)  # httpx 0.20+ defaults to False
     return httpx.Client(limits=limits, **client_options)
 
 

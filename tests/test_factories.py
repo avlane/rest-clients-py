@@ -45,12 +45,21 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual(client.kwargs["limits"].kwargs,
                          {"max_connections": 50, "max_keepalive_connections": 5})
         self.assertEqual(client.kwargs["timeout"], 3)
+        self.assertTrue(client.kwargs["follow_redirects"])
 
     def test_aiohttp_session_gets_connector(self):
         aiohttp = fake_module("aiohttp", TCPConnector=Recorder, ClientSession=Recorder)
         with mock.patch.dict(sys.modules, {"aiohttp": aiohttp}):
             session = factories.make_aiohttp_session(limit=30, limit_per_host=6)
         self.assertEqual(session.kwargs["connector"].kwargs, {"limit": 30, "limit_per_host": 6})
+
+    def test_default_httpx_clients_follow_redirects(self):
+        from restclients.async_client import AsyncHttpxClient
+        from restclients.httpx_client import HttpxClient
+        httpx = fake_module("httpx", Client=Recorder, AsyncClient=Recorder)
+        with mock.patch.dict(sys.modules, {"httpx": httpx}):
+            self.assertEqual(HttpxClient().client.kwargs, {"follow_redirects": True})
+            self.assertEqual(AsyncHttpxClient().client.kwargs, {"follow_redirects": True})
 
     def test_missing_library_raises_import_error(self):
         with mock.patch.dict(sys.modules, {"httpx": None}):

@@ -1,8 +1,8 @@
 # urllib vs requests vs httpx vs aiohttp
 
 Notes written while adding the fourth client. Behaviour listed is for the
-versions in `requirements.txt` as of this writing (requests 2.25, httpx 0.18,
-aiohttp 3.7). "Executed here" says whether this repo's tests ever ran the real
+versions in `requirements.txt` as of this writing (requests 2.26, httpx 0.20,
+aiohttp 3.8). "Executed here" says whether this repo's tests ever ran the real
 library; see the README for the full list.
 
 | | `urllib.request` | `requests` | `httpx` | `aiohttp` |
@@ -11,7 +11,7 @@ library; see the README for the full list.
 | sync / async | sync | sync | both (`Client`, `AsyncClient`) | async only |
 | connection pooling | none (a new connection per call) | `Session` | `Client` | `ClientSession` |
 | default timeout | none (waits forever) | none (waits forever) | 5 seconds | 5 minutes total |
-| redirects followed by default | yes | yes (not for `HEAD`) | yes in 0.18 (`allow_redirects`) | yes |
+| redirects followed by default | yes | yes (not for `HEAD`) | **no** since 0.20 (`follow_redirects=True`) | yes |
 | error status | raises `HTTPError` | returns the response; `raise_for_status()` raises | returns the response; `raise_for_status()` raises | returns the response; `raise_for_status=True` option |
 | JSON body out | `json.loads(resp.read())` | `resp.json()` | `resp.json()` | `await resp.json()` |
 | JSON body in | encode it yourself | `json=` | `json=` | `json=` |
@@ -26,6 +26,9 @@ library; see the README for the full list.
   otherwise. `HttpClient` therefore always passes one.
 * **Status errors.** `urllib` raises for 4xx/5xx, the others do not. The shared
   `Response.raise_for_status()` makes all four behave the same.
+* **Redirects.** httpx used to follow them (`allow_redirects`) and changed in
+  0.20 to opt-in (`follow_redirects`). `HttpxClient` asks for them explicitly
+  when it builds its own client, so it behaves like the others.
 * **Reading the body.** aiohttp only lets you read the body while the response
   context manager is open; the other three hand you a finished response.
 * **Exceptions.** Each library has its own hierarchy (`URLError`,

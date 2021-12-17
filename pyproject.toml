@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "rest-clients-py"
-version = "0.4.0"
+version = "0.5.0"
 description = "Notes and small building blocks for consuming REST APIs from Python"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -22,9 +22,9 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-requests = ["requests>=2.25.0"]
-httpx = ["httpx>=0.16.1"]
-aiohttp = ["aiohttp>=3.7.3"]
+requests = ["requests>=2.26.0"]
+httpx = ["httpx>=0.20.0"]
+aiohttp = ["aiohttp>=3.8.1"]
 
 [tool.flit.module]
 name = "restclients"

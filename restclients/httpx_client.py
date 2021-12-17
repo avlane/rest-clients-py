@@ -15,7 +15,8 @@ class HttpxClient(HttpClient):
         super().__init__(**kwargs)
         if client is None:
             import httpx  # lazy: only needed when the caller did not inject a client
-            client = httpx.Client()
+            # httpx 0.20 stopped following redirects by default; the other clients do, so match them
+            client = httpx.Client(follow_redirects=True)
         self.client = client
 
     def _send(self, method, url, headers, body, timeout):
