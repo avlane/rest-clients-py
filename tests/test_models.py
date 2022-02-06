@@ -1,6 +1,7 @@
 import unittest
 
 from restclients.models import Item, Order
+from restclients.validation import ValidationError
 
 
 class ModelTests(unittest.TestCase):
@@ -20,10 +21,10 @@ class ModelTests(unittest.TestCase):
         self.assertIsNone(order.note)
         self.assertEqual(order.to_dict()["items"][1]["name"], "b")
 
-    def test_missing_field_is_a_bare_key_error(self):
-        # the weakness the next step fixes: no path, no friendly message
-        with self.assertRaises(KeyError):
+    def test_missing_field_reports_its_path(self):
+        with self.assertRaises(ValidationError) as ctx:
             Item.from_dict({"id": 1})
+        self.assertEqual(ctx.exception.problems, [("$.name", "required field is missing")])
 
 
 if __name__ == "__main__":
