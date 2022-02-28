@@ -12,6 +12,7 @@ from typing import Any, Dict
 
 from restclients import pagination
 from restclients.client import HttpClient
+from restclients.validation import parse, parse_list
 
 JsonObject = Dict[str, Any]  # a runtime alias, so it stays typing.Dict until 3.9 is the floor
 
@@ -50,6 +51,19 @@ class ApiClient:
 
     def _delete(self, path: str) -> None:
         self.http.delete(path)
+
+    def _get_model(self, path: str, model: type, params: dict[str, Any] | None = None) -> Any:
+        """GET and decode into a dataclass; a bad payload raises ValidationError."""
+        return parse(model, self._get(path, params))
+
+    def _list_models(self, path: str, model: type, params: dict[str, Any] | None = None,
+                     **options: Any) -> Iterator[Any]:
+        """Iterate a collection lazily, decoding each element into ``model``."""
+        for raw in self._iterate(path, params, **options):
+            yield parse(model, raw)
+
+    def _post_model(self, path: str, model: type, payload: Any = None) -> Any:
+        return parse(model, self._post(path, payload))
 
     def _iterate(self, path: str, params: dict[str, Any] | None = None,
                  **options: Any) -> Iterator[Any]:

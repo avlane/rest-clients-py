@@ -371,6 +371,21 @@ class Handler(BaseHTTPRequestHandler):
             })
         self.send_json({"parts": parts}, 201)
 
+    def h_orders(self):
+        """Nested payloads. /orders/1 is valid, /orders/2 is not, /orders/3 has extra fields."""
+        which = self.segments[1] if len(self.segments) > 1 else ""
+        if which == "1":
+            return self.send_json({"id": 1, "customer": "Rowan Hale", "note": None,
+                                   "items": [{"id": 1, "name": "item-01", "price": 5},
+                                             {"id": 2, "name": "item-02", "price": 10}]})
+        if which == "2":
+            return self.send_json({"id": "2", "customer": "Rowan Hale",
+                                   "items": [{"id": 1, "name": 7}]})
+        if which == "3":
+            return self.send_json({"id": 3, "customer": "Mina Park", "loyalty_tier": "gold",
+                                   "items": [], "_links": {"self": "/orders/3"}})
+        self.send_json({"error": "not found"}, 404)
+
     # ROUTES-END
 
 
