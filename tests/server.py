@@ -255,6 +255,16 @@ class Handler(BaseHTTPRequestHandler):
         action = self.segments[1] if len(self.segments) > 1 else ""
         if action == "token" and self.command == "POST":
             return self._oauth_token()
+        if action == "authorize" and self.command == "GET":
+            # stands in for the browser round trip: the "user" approves immediately
+            if not self.q("code_challenge") or self.q("code_challenge_method") != "S256":
+                return self.send_json({"error": "invalid_request",
+                                       "error_description": "PKCE with S256 is required"}, 400)
+            code = "code-%d" % self._count("codes-issued")
+            self.server.auth_codes[code] = {"client_id": self.q("client_id"),
+                                            "redirect_uri": self.q("redirect_uri"),
+                                            "challenge": self.q("code_challenge")}
+            return self.send_json({"code": code, "state": self.q("state")})
         if action == "revoke-all" and self.command == "POST":
             self.server.valid_tokens.clear()
             return self.send_json({"revoked": True})
@@ -268,6 +278,28 @@ class Handler(BaseHTTPRequestHandler):
 
     def _oauth_token(self):
         form = parse_qs(self.body.decode("utf-8"))
+        grant = form.get("grant_type", [""])[0]
+        if grant == "client_credentials":
+            return self._grant_client_credentials(form)
+        if grant == "authorization_code":
+            return self._grant_authorization_code(form)
+        if grant == "refresh_token":
+            return self._grant_refresh_token(form)
+        self.send_json({"error": "unsupported_grant_type"}, 400)
+
+    def _issue(self, client_id, form, refresh=False):
+        n = self._count("tokens-issued")
+        token = "at-%d" % n
+        self.server.valid_tokens[token] = client_id
+        body = {"access_token": token, "token_type": "Bearer",
+                "expires_in": self.server.token_ttl, "scope": form.get("scope", [""])[0]}
+        if refresh:
+            rt = "rt-%d" % n
+            self.server.refresh_tokens[rt] = client_id
+            body["refresh_token"] = rt
+        self.send_json(body, headers={"Cache-Control": "no-store"})
+
+    def _grant_client_credentials(self, form):
         client_id = client_secret = None
         auth = self.headers.get("Authorization", "")
         if auth.startswith("Basic "):
@@ -280,16 +312,29 @@ class Handler(BaseHTTPRequestHandler):
         if (client_id, client_secret) != ("svc-reports", "shh"):
             return self.send_json({"error": "invalid_client"}, 401,
                                   {"WWW-Authenticate": 'Basic realm="oauth"'})
-        grant = form.get("grant_type", [""])[0]
-        if grant != "client_credentials":
-            return self.send_json({"error": "unsupported_grant_type"}, 400)
-        n = self._count("tokens-issued")
-        token = "at-%d" % n
-        self.server.valid_tokens[token] = client_id
-        self.send_json({"access_token": token, "token_type": "Bearer",
-                        "expires_in": self.server.token_ttl,
-                        "scope": form.get("scope", [""])[0]},
-                       headers={"Cache-Control": "no-store"})
+        self._issue(client_id, form)
+
+    def _grant_authorization_code(self, form):
+        code = form.get("code", [""])[0]
+        pending = self.server.auth_codes.pop(code, None)   # codes are single use
+        if pending is None:
+            return self.send_json({"error": "invalid_grant", "error_description": "unknown or used code"}, 400)
+        if form.get("redirect_uri", [""])[0] != pending["redirect_uri"] or \
+                form.get("client_id", [""])[0] != pending["client_id"]:
+            return self.send_json({"error": "invalid_grant", "error_description": "client mismatch"}, 400)
+        verifier = form.get("code_verifier", [""])[0]
+        digest = hashlib.sha256(verifier.encode("ascii", "replace")).digest()
+        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+        if challenge != pending["challenge"]:
+            return self.send_json({"error": "invalid_grant", "error_description": "PKCE verification failed"}, 400)
+        self._issue(pending["client_id"], form, refresh=True)
+
+    def _grant_refresh_token(self, form):
+        rt = form.get("refresh_token", [""])[0]
+        client_id = self.server.refresh_tokens.pop(rt, None)  # rotation: each one works once
+        if client_id is None:
+            return self.send_json({"error": "invalid_grant", "error_description": "bad refresh token"}, 400)
+        self._issue(client_id, form, refresh=True)
 
     def h_errors(self):
         """Error bodies in the shapes different APIs use."""
@@ -400,6 +445,8 @@ class ApiServer:
         self.httpd.in_flight = 0
         self.httpd.max_in_flight = 0
         self.httpd.valid_tokens = {}
+        self.httpd.refresh_tokens = {}
+        self.httpd.auth_codes = {}
         self.httpd.token_ttl = 3600
         self.httpd.items = [dict(i) for i in ITEMS]
         self.httpd.lock = threading.Lock()
