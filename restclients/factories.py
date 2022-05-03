@@ -44,3 +44,21 @@ def make_aiohttp_session(limit=100, limit_per_host=0, **session_options):
 
     connector = aiohttp.TCPConnector(limit=limit, limit_per_host=limit_per_host)
     return aiohttp.ClientSession(connector=connector, **session_options)
+
+
+def make_oauthlib_session(client_id, token, token_url, client_secret=None, scope=None,
+                          token_saver=None):
+    """A ``requests_oauthlib.OAuth2Session`` that refreshes its own token.
+
+    The result is a ``requests.Session`` subclass, so it can be handed straight
+    to :class:`restclients.requests_client.RequestsClient`. ``token`` is the dict
+    the token endpoint returned; ``token_saver(new_token)`` is called after each
+    automatic refresh so the caller can persist it.
+    """
+    from requests_oauthlib import OAuth2Session
+
+    extra = {"client_id": client_id}
+    if client_secret:
+        extra["client_secret"] = client_secret
+    return OAuth2Session(client_id, token=token, scope=scope, auto_refresh_url=token_url,
+                         auto_refresh_kwargs=extra, token_updater=token_saver)

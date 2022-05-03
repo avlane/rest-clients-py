@@ -61,6 +61,20 @@ class FactoryTests(unittest.TestCase):
             self.assertEqual(HttpxClient().client.kwargs, {"follow_redirects": True})
             self.assertEqual(AsyncHttpxClient().client.kwargs, {"follow_redirects": True})
 
+    def test_oauthlib_session_is_configured_for_auto_refresh(self):
+        module = fake_module("requests_oauthlib", OAuth2Session=Recorder)
+        saved = []
+        with mock.patch.dict(sys.modules, {"requests_oauthlib": module}):
+            session = factories.make_oauthlib_session(
+                "app", {"access_token": "a"}, "https://auth.test/token", client_secret="s",
+                scope=["read"], token_saver=saved.append)
+        self.assertEqual(session.args, ("app",))
+        self.assertEqual(session.kwargs["auto_refresh_url"], "https://auth.test/token")
+        self.assertEqual(session.kwargs["auto_refresh_kwargs"], {"client_id": "app", "client_secret": "s"})
+        self.assertEqual(session.kwargs["token"], {"access_token": "a"})
+        session.kwargs["token_updater"]({"access_token": "b"})
+        self.assertEqual(saved, [{"access_token": "b"}])
+
     def test_missing_library_raises_import_error(self):
         with mock.patch.dict(sys.modules, {"httpx": None}):
             with self.assertRaises(ImportError):
