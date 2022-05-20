@@ -5,16 +5,19 @@ JSON bodies, status checking) lives here, so the urllib, requests and httpx
 clients behave the same way.
 """
 import json as _json
+import logging
 import time
 from urllib.parse import urlencode
 
 from restclients.errors import TransportError, error_for_status
+from restclients.logging_utils import redact_url
 from restclients.multipart import FilePart, encode_multipart
 from restclients.response import Response
 from restclients.retry import parse_retry_after
 from restclients.urls import build_url, join_url
 
 USER_AGENT = "rest-clients-py/0.1"
+log = logging.getLogger("restclients.http")
 
 
 def _as_file_parts(files):
@@ -80,8 +83,9 @@ class HttpClient(RequestBuilder):
     """
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
-                 sleep=time.sleep, rate_limiter=None, cache=None):
+                 sleep=time.sleep, rate_limiter=None, cache=None, logger=None):
         super().__init__(base_url, headers, timeout, auth)
+        self.logger = logger or log
         self.cache = cache
         self.retry = retry
         self.rate_limiter = rate_limiter
@@ -167,6 +171,18 @@ class HttpClient(RequestBuilder):
             raise error_for_status(response.status, prepared.url, body, response.headers.as_dict())
         return response
 
+    def _log(self, level, method, url, status, started, attempt, error=None):
+        if not self.logger.isEnabledFor(level):
+            return
+        safe_url = redact_url(url)
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        info = {"method": method, "url": safe_url, "status": status,
+                "duration_ms": elapsed_ms, "attempt": attempt}
+        if error:
+            info["error"] = error
+        self.logger.log(level, "%s %s -> %s", method, safe_url, status if status else "failed",
+                        extra=info)
+
     def _send_with_retries(self, method, url, headers, body, timeout):
         policy = self.retry
         attempt = 0
@@ -176,13 +192,18 @@ class HttpClient(RequestBuilder):
                          and policy.attempts_left(attempt))
             if self.rate_limiter is not None:
                 self.rate_limiter.acquire()  # retries count against the limit too
+            started = time.perf_counter()
             try:
                 response = self._send(method, url, headers, body, timeout)
-            except TransportError:
+            except TransportError as exc:
+                self._log(logging.WARNING if retryable else logging.ERROR, method, url, None,
+                          started, attempt, error=exc.message)
                 if not retryable:
                     raise
                 self._sleep(policy.wait_seconds(attempt))
                 continue
+            self._log(logging.INFO if response.status < 400 else logging.WARNING, method, url,
+                      response.status, started, attempt)
             if retryable and policy.should_retry_status(response.status):
                 retry_after = parse_retry_after(response.headers.get("Retry-After"))
                 wait = policy.wait_seconds(attempt, retry_after)
