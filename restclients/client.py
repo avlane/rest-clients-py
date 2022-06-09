@@ -7,10 +7,11 @@ clients behave the same way.
 import json as _json
 import logging
 import time
+import uuid
 from urllib.parse import urlencode
 
 from restclients.errors import TransportError, error_for_status
-from restclients.logging_utils import redact_url
+from restclients.logging_utils import correlation_id, redact_url
 from restclients.multipart import FilePart, encode_multipart
 from restclients.response import Response
 from restclients.retry import parse_retry_after
@@ -83,9 +84,10 @@ class HttpClient(RequestBuilder):
     """
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
-                 sleep=time.sleep, rate_limiter=None, cache=None, logger=None):
+                 sleep=time.sleep, rate_limiter=None, cache=None, logger=None, request_id_header="X-Request-ID"):
         super().__init__(base_url, headers, timeout, auth)
         self.logger = logger or log
+        self.request_id_header = request_id_header
         self.cache = cache
         self.retry = retry
         self.rate_limiter = rate_limiter
@@ -115,17 +117,19 @@ class HttpClient(RequestBuilder):
         prepared = self.prepare(method, path, params, headers, json, data, timeout, auth, form,
                                files)
         method, url, send_headers = prepared.method, prepared.url, prepared.headers
+        request_id = self._request_id(send_headers)
         body, timeout, auth = prepared.body, prepared.timeout, prepared.auth
         cache_key = url if method == "GET" and self.cache is not None else None
         if cache_key is not None:
             for name, value in self.cache.conditional_headers(cache_key).items():
                 send_headers.setdefault(name, value)
-        response = self._send_with_retries(method, url, send_headers, body, timeout)
+        response = self._send_with_retries(method, url, send_headers, body, timeout, request_id)
         if response.status == 401 and hasattr(auth, "invalidate"):
             # The token may have been revoked or expired early: get a fresh one and try once more.
             auth.invalidate()
             auth.apply(send_headers)
-            response = self._send_with_retries(method, url, send_headers, body, timeout)
+            response = self._send_with_retries(method, url, send_headers, body, timeout,
+                                               request_id)
         if cache_key is not None:
             if response.status == 304 and cache_key in self.cache:
                 response = self.cache.revalidated(cache_key, response)
@@ -171,19 +175,35 @@ class HttpClient(RequestBuilder):
             raise error_for_status(response.status, prepared.url, body, response.headers.as_dict())
         return response
 
-    def _log(self, level, method, url, status, started, attempt, error=None):
+    def _request_id(self, send_headers):
+        """Id shared by all attempts of one call: caller's header, else the context's, else new."""
+        name = self.request_id_header
+        if not name:
+            return None
+        existing = next((v for k, v in send_headers.items() if k.lower() == name.lower()), None)
+        request_id = existing or correlation_id.get() or uuid.uuid4().hex
+        if not existing:
+            send_headers[name] = request_id
+        return request_id
+
+    def _log(self, level, method, url, status, started, attempt, error=None, request_id=None,
+             response=None):
         if not self.logger.isEnabledFor(level):
             return
         safe_url = redact_url(url)
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         info = {"method": method, "url": safe_url, "status": status,
                 "duration_ms": elapsed_ms, "attempt": attempt}
+        if request_id:
+            info["request_id"] = request_id
+        if response is not None and "X-Request-ID" in response.headers:
+            info["server_request_id"] = response.headers["X-Request-ID"]
         if error:
             info["error"] = error
         self.logger.log(level, "%s %s -> %s", method, safe_url, status if status else "failed",
                         extra=info)
 
-    def _send_with_retries(self, method, url, headers, body, timeout):
+    def _send_with_retries(self, method, url, headers, body, timeout, request_id=None):
         policy = self.retry
         attempt = 0
         while True:
@@ -197,13 +217,13 @@ class HttpClient(RequestBuilder):
                 response = self._send(method, url, headers, body, timeout)
             except TransportError as exc:
                 self._log(logging.WARNING if retryable else logging.ERROR, method, url, None,
-                          started, attempt, error=exc.message)
+                          started, attempt, error=exc.message, request_id=request_id)
                 if not retryable:
                     raise
                 self._sleep(policy.wait_seconds(attempt))
                 continue
             self._log(logging.INFO if response.status < 400 else logging.WARNING, method, url,
-                      response.status, started, attempt)
+                      response.status, started, attempt, request_id=request_id, response=response)
             if retryable and policy.should_retry_status(response.status):
                 retry_after = parse_retry_after(response.headers.get("Retry-After"))
                 wait = policy.wait_seconds(attempt, retry_after)

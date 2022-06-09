@@ -60,6 +60,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         for key, value in (headers or {}).items():
             self.send_header(key, value)
+        self.send_header("X-Request-ID", self.headers.get("X-Request-ID") or "server-generated")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)

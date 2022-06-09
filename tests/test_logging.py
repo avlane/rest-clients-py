@@ -4,7 +4,7 @@ import logging
 import unittest
 
 from restclients.auth import BearerAuth
-from restclients.logging_utils import JsonFormatter, redact_headers, redact_url
+from restclients.logging_utils import JsonFormatter, correlation_id, redact_headers, redact_url
 from restclients.retry import RetryPolicy
 from restclients.urllib_client import UrllibClient
 from tests.server import ApiServer
@@ -83,6 +83,39 @@ class ClientLoggingTests(unittest.TestCase):
                 client.get("/items/1")
         self.assertIsNone(logs.records[0].status)
         self.assertIn("failed", logs.output[0])
+
+    def test_request_id_is_sent_logged_and_shared_across_retries(self):
+        client = UrllibClient(base_url=self.server.url, sleep=lambda s: None,
+                              retry=RetryPolicy(jitter=False))
+        with self.assertLogs("restclients.http", "INFO") as logs:
+            client.get("/flaky", params={"key": "rid", "fail": 1})
+        ids = {r.request_id for r in logs.records}
+        self.assertEqual(len(ids), 1)
+        sent = [h["X-Request-Id"] for m, p, h in self.server.requests if "key=rid" in p]
+        self.assertEqual(sent, [ids.pop()] * 2)
+        self.assertEqual(logs.records[-1].server_request_id, sent[0])
+
+    def test_caller_supplied_request_id_wins(self):
+        client = UrllibClient(base_url=self.server.url)
+        with self.assertLogs("restclients.http", "INFO") as logs:
+            client.get("/items/1", headers={"X-Request-ID": "mine-1"})
+        self.assertEqual(logs.records[0].request_id, "mine-1")
+
+    def test_correlation_id_context(self):
+        client = UrllibClient(base_url=self.server.url)
+        token = correlation_id.set("job-42")
+        try:
+            with self.assertLogs("restclients.http", "INFO") as logs:
+                client.get("/items/1")
+                client.get("/items/2")
+        finally:
+            correlation_id.reset(token)
+        self.assertEqual([r.request_id for r in logs.records], ["job-42", "job-42"])
+
+    def test_request_id_can_be_disabled(self):
+        client = UrllibClient(base_url=self.server.url, request_id_header=None)
+        client.get("/echo")
+        self.assertNotIn("X-Request-Id", self.server.requests[-1][2])
 
     def test_custom_logger(self):
         client = UrllibClient(base_url=self.server.url, logger=logging.getLogger("my.app.http"))

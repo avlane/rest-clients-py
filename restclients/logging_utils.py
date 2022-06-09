@@ -1,4 +1,5 @@
 """Structured (JSON lines) logging for HTTP traffic, with secrets removed."""
+import contextvars
 import json
 import logging
 from datetime import datetime, timezone
@@ -9,6 +10,10 @@ SENSITIVE_HEADERS = frozenset(["authorization", "proxy-authorization", "cookie",
 SENSITIVE_PARAMS = frozenset(["token", "access_token", "refresh_token", "api_key", "apikey", "key",
                               "secret", "client_secret", "password", "signature", "code"])
 REDACTED = "***"
+
+#: Set this around a unit of work (a job, an incoming request) and every HTTP call
+#: made inside it reuses the id, so the logs of different services can be joined.
+correlation_id = contextvars.ContextVar("restclients_correlation_id", default=None)
 
 _STANDARD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime"}
 
