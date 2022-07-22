@@ -14,7 +14,9 @@ import os
 import tempfile
 
 from restclients.client import HttpClient
+from restclients.errors import ApiError
 from restclients.logging_utils import redact_headers, redact_url
+from restclients.response import Response
 
 FORMAT_VERSION = 1
 
@@ -128,3 +130,93 @@ class RecordingClient(HttpClient):
         if self.cassette.path:
             self.cassette.save()
         self.inner.close()
+
+
+class NoMatchingInteraction(ApiError):
+    """Replay was asked for a request that is not in the cassette.
+
+    Deliberately not a TransportError, so retry policies do not retry it.
+    """
+
+
+def _normalize_body(body):
+    """Compare JSON bodies by value (key order and whitespace do not matter)."""
+    if not body:
+        return b""
+    try:
+        return json.dumps(json.loads(body.decode("utf-8")), sort_keys=True).encode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return body
+
+
+class ReplayClient(HttpClient):
+    """Answer requests from a cassette without touching the network.
+
+    A request matches a recorded interaction when ``match_on`` agrees; the
+    first unused match is served and then marked used, so a recorded
+    503-then-200 sequence replays in order. ``allow_playback_repeats=True``
+    serves the same interaction again instead.
+    """
+
+    def __init__(self, cassette, match_on=("method", "url"), allow_playback_repeats=False, **kwargs):
+        super().__init__(**kwargs)
+        self.cassette = cassette
+        self.match_on = tuple(match_on)
+        self.allow_playback_repeats = allow_playback_repeats
+        self._used = set()
+
+    def _key(self, method, url, body):
+        parts = []
+        for name in self.match_on:
+            if name == "method":
+                parts.append(method)
+            elif name == "url":
+                parts.append(redact_url(url))
+            elif name == "body":
+                parts.append(_normalize_body(body or b""))
+            else:
+                raise ValueError("cannot match on %r" % name)
+        return tuple(parts)
+
+    def _send(self, method, url, headers, body, timeout):
+        wanted = self._key(method, url, body)
+        for index, interaction in enumerate(self.cassette.interactions):
+            if index in self._used and not self.allow_playback_repeats:
+                continue
+            if self._key(interaction.method, interaction.url, interaction.request_body) == wanted:
+                self._used.add(index)
+                return Response(interaction.status, [tuple(h) for h in interaction.response_headers],
+                                interaction.response_body, url)
+        raise NoMatchingInteraction("no recorded interaction for %s %s (matching on %s)"
+                                    % (method, redact_url(url), ", ".join(self.match_on)), url=url)
+
+    def unused(self):
+        """Recorded interactions that were never requested."""
+        return [i for n, i in enumerate(self.cassette.interactions) if n not in self._used]
+
+    def assert_all_used(self):
+        leftovers = self.unused()
+        if leftovers:
+            raise AssertionError("%d recorded interaction(s) were never replayed: %s" % (
+                len(leftovers), ", ".join("%s %s" % (i.method, i.url) for i in leftovers)))
+
+
+def cassette_client(path, inner=None, mode="once", **kwargs):
+    """Pick record or replay from the cassette file, like vcrpy's record modes.
+
+    * ``"once"`` (default): replay if ``path`` exists, otherwise record to it.
+    * ``"none"``: only replay; a missing file or request is an error.
+    * ``"all"``: always record, replacing the file when the client is closed.
+
+    ``inner`` is the real client used for recording (not needed for ``"none"``).
+    """
+    if mode not in ("once", "none", "all"):
+        raise ValueError("unknown mode %r" % mode)
+    exists = os.path.exists(path)
+    if mode == "none" and not exists:
+        raise FileNotFoundError("cassette %s does not exist and mode is 'none'" % path)
+    if mode == "all" or (mode == "once" and not exists):
+        if inner is None:
+            raise ValueError("recording needs an inner client")
+        return RecordingClient(inner, Cassette(path), **kwargs)
+    return ReplayClient(Cassette.load(path), **kwargs)
