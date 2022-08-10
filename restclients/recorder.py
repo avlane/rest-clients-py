@@ -11,11 +11,13 @@ parameters are redacted *before* storing.
 import base64
 import json
 import os
+import re
 import tempfile
 
 from restclients.client import HttpClient
 from restclients.errors import ApiError
-from restclients.logging_utils import redact_headers, redact_url
+from restclients.logging_utils import (REDACTED, SENSITIVE_HEADERS, SENSITIVE_PARAMS,
+                                       redact_headers, redact_url)
 from restclients.response import Response
 
 FORMAT_VERSION = 1
@@ -35,6 +37,70 @@ def decode_body(stored):
     if "base64" in stored:
         return base64.b64decode(stored["base64"])
     return stored.get("text", "").encode("utf-8")
+
+
+class Scrubber:
+    """Decides what must never be written to a cassette.
+
+    * ``headers``: header names whose values are replaced (case-insensitive);
+    * ``params``: query-string parameter names replaced in URLs;
+    * ``json_keys``: object keys whose values are replaced anywhere in a JSON body
+      (strings, numbers and nested values alike);
+    * ``regexes``: ``(pattern, replacement)`` pairs applied to text bodies that are
+      not JSON, and to JSON string values.
+    """
+
+    def __init__(self, headers=SENSITIVE_HEADERS, params=SENSITIVE_PARAMS,
+                 json_keys=None, regexes=()):
+        self.header_names = frozenset(h.lower() for h in headers)
+        self.params = frozenset(p.lower() for p in params)
+        default_keys = SENSITIVE_PARAMS | SENSITIVE_HEADERS | {"id_token", "private_key", "ssn"}
+        self.json_keys = frozenset(k.lower() for k in (default_keys if json_keys is None else json_keys))
+        self.regexes = [(re.compile(p), r) for p, r in regexes]
+
+    def url(self, url):
+        return redact_url(url, self.params)
+
+    def request_headers(self, headers):
+        return redact_headers(headers, self.header_names)
+
+    def response_headers(self, pairs):
+        return [[k, REDACTED if k.lower() in self.header_names else v] for k, v in pairs]
+
+    def body(self, body):
+        """Scrub a body (bytes); JSON is parsed and re-serialised only if something changed."""
+        if not body:
+            return body
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return self._scrub_text_bytes(body)
+        cleaned = self._scrub_json(data)
+        if cleaned == data:
+            return body
+        return json.dumps(cleaned).encode("utf-8")
+
+    def _scrub_text_bytes(self, body):
+        if not self.regexes:
+            return body
+        try:
+            text = body.decode("utf-8")
+        except UnicodeDecodeError:
+            return body
+        for pattern, replacement in self.regexes:
+            text = pattern.sub(replacement, text)
+        return text.encode("utf-8")
+
+    def _scrub_json(self, node):
+        if isinstance(node, dict):
+            return {k: REDACTED if k.lower() in self.json_keys else self._scrub_json(v)
+                    for k, v in node.items()}
+        if isinstance(node, list):
+            return [self._scrub_json(v) for v in node]
+        if isinstance(node, str):
+            for pattern, replacement in self.regexes:
+                node = pattern.sub(replacement, node)
+        return node
 
 
 class Interaction:
@@ -113,17 +179,20 @@ class RecordingClient(HttpClient):
     request that was retried produces one interaction per attempt.
     """
 
-    def __init__(self, inner, cassette, **kwargs):
+    def __init__(self, inner, cassette, scrubber=None, **kwargs):
         kwargs.setdefault("timeout", inner.timeout)
         super().__init__(**kwargs)
         self.inner = inner
         self.cassette = cassette
+        self.scrubber = scrubber or Scrubber()
 
     def _send(self, method, url, headers, body, timeout):
         response = self.inner._send(method, url, headers, body, timeout)
+        scrub = self.scrubber
         self.cassette.append(Interaction(
-            method, redact_url(url), redact_headers(headers), body or b"", response.status,
-            [[k, v] for k, v in response.headers.items()], response.content))
+            method, scrub.url(url), scrub.request_headers(headers), scrub.body(body or b""),
+            response.status, scrub.response_headers(response.headers.items()),
+            scrub.body(response.content)))
         return response
 
     def close(self):
@@ -158,8 +227,10 @@ class ReplayClient(HttpClient):
     serves the same interaction again instead.
     """
 
-    def __init__(self, cassette, match_on=("method", "url"), allow_playback_repeats=False, **kwargs):
+    def __init__(self, cassette, match_on=("method", "url"), allow_playback_repeats=False,
+                 scrubber=None, **kwargs):
         super().__init__(**kwargs)
+        self.scrubber = scrubber or Scrubber()
         self.cassette = cassette
         self.match_on = tuple(match_on)
         self.allow_playback_repeats = allow_playback_repeats
@@ -171,9 +242,9 @@ class ReplayClient(HttpClient):
             if name == "method":
                 parts.append(method)
             elif name == "url":
-                parts.append(redact_url(url))
+                parts.append(self.scrubber.url(url))
             elif name == "body":
-                parts.append(_normalize_body(body or b""))
+                parts.append(_normalize_body(self.scrubber.body(body or b"")))
             else:
                 raise ValueError("cannot match on %r" % name)
         return tuple(parts)
@@ -188,7 +259,7 @@ class ReplayClient(HttpClient):
                 return Response(interaction.status, [tuple(h) for h in interaction.response_headers],
                                 interaction.response_body, url)
         raise NoMatchingInteraction("no recorded interaction for %s %s (matching on %s)"
-                                    % (method, redact_url(url), ", ".join(self.match_on)), url=url)
+                                    % (method, self.scrubber.url(url), ", ".join(self.match_on)), url=url)
 
     def unused(self):
         """Recorded interactions that were never requested."""

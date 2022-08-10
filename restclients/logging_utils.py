@@ -18,12 +18,12 @@ correlation_id = contextvars.ContextVar("restclients_correlation_id", default=No
 _STANDARD_ATTRS = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime"}
 
 
-def redact_headers(headers):
+def redact_headers(headers, names=SENSITIVE_HEADERS):
     """Copy of ``headers`` (a mapping) with credentials replaced by ``***``."""
-    return {k: (REDACTED if k.lower() in SENSITIVE_HEADERS else v) for k, v in dict(headers).items()}
+    return {k: (REDACTED if k.lower() in names else v) for k, v in dict(headers).items()}
 
 
-def redact_url(url):
+def redact_url(url, params=SENSITIVE_PARAMS):
     """``url`` with secret-looking query parameter values and any password replaced."""
     parts = urlsplit(url)
     netloc = parts.netloc
@@ -32,8 +32,8 @@ def redact_url(url):
         user = userinfo.split(":", 1)[0]
         netloc = "%s:%s@%s" % (user, REDACTED, host) if ":" in userinfo else netloc
     query = parse_qsl(parts.query, keep_blank_values=True)
-    if any(k.lower() in SENSITIVE_PARAMS for k, _ in query):
-        query = [(k, REDACTED if k.lower() in SENSITIVE_PARAMS else v) for k, v in query]
+    if any(k.lower() in params for k, _ in query):
+        query = [(k, REDACTED if k.lower() in params else v) for k, v in query]
         return urlunsplit(parts._replace(netloc=netloc, query=urlencode(query, safe="*")))
     return urlunsplit(parts._replace(netloc=netloc))
 

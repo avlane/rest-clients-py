@@ -91,6 +91,16 @@ class RecordThenReplayTests(unittest.TestCase):
         with self.assertRaises(NoMatchingInteraction):
             replay.post("/items", json={"name": "c"})
 
+    def test_secrets_in_request_bodies_do_not_break_matching(self):
+        cassette = self.record(lambda c: c.post("/echo", json={"user": "a", "password": "first-run"}))
+        stored = cassette.interactions[0].request_body
+        self.assertNotIn(b"first-run", stored)
+        replay = ReplayClient(cassette, base_url=self.base, match_on=("method", "url", "body"))
+        # a different password on the replay run still matches: both sides are scrubbed
+        resp = replay.post("/echo", json={"user": "a", "password": "second-run"})
+        self.assertEqual(resp.status, 200)
+        self.assertNotIn("first-run", resp.text)
+
     def test_cannot_match_on_unknown_field(self):
         replay = ReplayClient(Cassette([]), match_on=("colour",))
         with self.assertRaises(ValueError):
