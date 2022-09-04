@@ -1,0 +1,249 @@
+{
+  "interactions": [
+    {
+      "request": {
+        "body": {
+          "text": ""
+        },
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "rest-clients-py/0.1"
+        },
+        "method": "GET",
+        "url": "https://api.example.test/linked?per_page=10"
+      },
+      "response": {
+        "body": {
+          "text": "[{\"id\": 1, \"name\": \"item-01\", \"price\": 5}, {\"id\": 2, \"name\": \"item-02\", \"price\": 10}, {\"id\": 3, \"name\": \"item-03\", \"price\": 15}, {\"id\": 4, \"name\": \"item-04\", \"price\": 20}, {\"id\": 5, \"name\": \"item-05\", \"price\": 25}, {\"id\": 6, \"name\": \"item-06\", \"price\": 30}, {\"id\": 7, \"name\": \"item-07\", \"price\": 35}, {\"id\": 8, \"name\": \"item-08\", \"price\": 40}, {\"id\": 9, \"name\": \"item-09\", \"price\": 45}, {\"id\": 10, \"name\": \"item-10\", \"price\": 50}]"
+        },
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "430"
+          ],
+          [
+            "Link",
+            "<https://api.example.test/linked?per_page=10&page=2>; rel=\"next\", <https://api.example.test/linked?per_page=10&page=3>; rel=\"last\""
+          ]
+        ],
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "body": {
+          "text": ""
+        },
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "rest-clients-py/0.1"
+        },
+        "method": "GET",
+        "url": "https://api.example.test/linked?per_page=10&page=2"
+      },
+      "response": {
+        "body": {
+          "text": "[{\"id\": 11, \"name\": \"item-11\", \"price\": 55}, {\"id\": 12, \"name\": \"item-12\", \"price\": 60}, {\"id\": 13, \"name\": \"item-13\", \"price\": 65}, {\"id\": 14, \"name\": \"item-14\", \"price\": 70}, {\"id\": 15, \"name\": \"item-15\", \"price\": 75}, {\"id\": 16, \"name\": \"item-16\", \"price\": 80}, {\"id\": 17, \"name\": \"item-17\", \"price\": 85}, {\"id\": 18, \"name\": \"item-18\", \"price\": 90}, {\"id\": 19, \"name\": \"item-19\", \"price\": 95}, {\"id\": 20, \"name\": \"item-20\", \"price\": 100}]"
+        },
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "441"
+          ],
+          [
+            "Link",
+            "<https://api.example.test/linked?per_page=10&page=3>; rel=\"next\", <https://api.example.test/linked?per_page=10&page=3>; rel=\"last\", <https://api.example.test/linked?per_page=10&page=1>; rel=\"prev\", <https://api.example.test/linked?per_page=10&page=1>; rel=\"first\""
+          ]
+        ],
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "body": {
+          "text": ""
+        },
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "rest-clients-py/0.1"
+        },
+        "method": "GET",
+        "url": "https://api.example.test/linked?per_page=10&page=3"
+      },
+      "response": {
+        "body": {
+          "text": "[{\"id\": 21, \"name\": \"item-21\", \"price\": 105}, {\"id\": 22, \"name\": \"item-22\", \"price\": 110}, {\"id\": 23, \"name\": \"item-23\", \"price\": 115}]"
+        },
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "135"
+          ],
+          [
+            "Link",
+            "<https://api.example.test/linked?per_page=10&page=2>; rel=\"prev\", <https://api.example.test/linked?per_page=10&page=1>; rel=\"first\""
+          ]
+        ],
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "body": {
+          "text": ""
+        },
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "rest-clients-py/0.1"
+        },
+        "method": "GET",
+        "url": "https://api.example.test/orders/1"
+      },
+      "response": {
+        "body": {
+          "text": "{\"id\": 1, \"customer\": \"Rowan Hale\", \"note\": null, \"items\": [{\"id\": 1, \"name\": \"item-01\", \"price\": 5}, {\"id\": 2, \"name\": \"item-02\", \"price\": 10}]}"
+        },
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "145"
+          ]
+        ],
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "body": {
+          "text": ""
+        },
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "rest-clients-py/0.1"
+        },
+        "method": "GET",
+        "url": "https://api.example.test/items/7"
+      },
+      "response": {
+        "body": {
+          "text": "{\"id\": 7, \"name\": \"item-07\", \"price\": 35}"
+        },
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "41"
+          ]
+        ],
+        "status": 200
+      }
+    },
+    {
+      "request": {
+        "body": {
+          "text": ""
+        },
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "rest-clients-py/0.1"
+        },
+        "method": "GET",
+        "url": "https://api.example.test/items/999"
+      },
+      "response": {
+        "body": {
+          "text": "{\"error\": \"not found\"}"
+        },
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "22"
+          ]
+        ],
+        "status": 404
+      }
+    },
+    {
+      "request": {
+        "body": {
+          "text": ""
+        },
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "rest-clients-py/0.1"
+        },
+        "method": "GET",
+        "url": "https://api.example.test/flaky?key=***&fail=1"
+      },
+      "response": {
+        "body": {
+          "text": "{\"error\": \"temporarily broken\", \"call\": 1}"
+        },
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "42"
+          ]
+        ],
+        "status": 503
+      }
+    },
+    {
+      "request": {
+        "body": {
+          "text": ""
+        },
+        "headers": {
+          "Accept": "application/json",
+          "User-Agent": "rest-clients-py/0.1"
+        },
+        "method": "GET",
+        "url": "https://api.example.test/flaky?key=***&fail=1"
+      },
+      "response": {
+        "body": {
+          "text": "{\"ok\": true, \"call\": 2}"
+        },
+        "headers": [
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "23"
+          ]
+        ],
+        "status": 200
+      }
+    }
+  ],
+  "version": 1
+}
