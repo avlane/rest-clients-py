@@ -432,6 +432,20 @@ class Handler(BaseHTTPRequestHandler):
                                    "items": [], "_links": {"self": "/orders/3"}})
         self.send_json({"error": "not found"}, 404)
 
+    def h_redirect(self):
+        """/redirect?to=<url>&code=302 answers with that status and a Location header.
+
+        /redirect/loop redirects to itself forever.
+        """
+        if self.segments[1:] == ["loop"]:
+            target = "/redirect/loop"
+        else:
+            target = self.q("to", "/items/1")
+        self.send_response(int(self.q("code", 302)))
+        self.send_header("Location", target)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     # ROUTES-END
 
 

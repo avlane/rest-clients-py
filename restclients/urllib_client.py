@@ -1,6 +1,7 @@
 """HttpClient on top of urllib.request (standard library only)."""
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 from restclients.client import HttpClient
 from restclients.errors import TransportError
@@ -14,13 +15,65 @@ def socket_timeout(timeout):
     return timeout
 
 
+def _origin(url):
+    parts = urlsplit(url)
+    return (parts.scheme, parts.hostname, parts.port or {"http": 80, "https": 443}.get(parts.scheme))
+
+
+class RedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Redirect policy closer to what requests/httpx do than urllib's default.
+
+    * 301/302/303 turn POST (and friends) into a body-less GET; 303 always does;
+    * 307/308 repeat the request with the same method and body (urllib refuses
+      for anything but GET/HEAD);
+    * credentials (``Authorization``, ``Cookie``) are dropped when the redirect
+      leaves the original origin; urllib would forward them to the new host.
+    """
+
+    max_redirections = 10
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if code in (307, 308):
+            new = urllib.request.Request(newurl, data=req.data, method=req.get_method(),
+                                         headers=dict(req.headers), origin_req_host=req.origin_req_host,
+                                         unverifiable=True)
+        else:
+            method = req.get_method()
+            if code == 303 or method == "POST":
+                method = "GET" if method != "HEAD" else "HEAD"
+                skip = ("content-length", "content-type", "transfer-encoding")
+                new = urllib.request.Request(
+                    newurl, method=method, origin_req_host=req.origin_req_host, unverifiable=True,
+                    headers={k: v for k, v in req.headers.items() if k.lower() not in skip})
+            else:
+                new = urllib.request.Request(newurl, data=req.data, method=method,
+                                             headers=dict(req.headers),
+                                             origin_req_host=req.origin_req_host, unverifiable=True)
+        if _origin(newurl) != _origin(req.full_url):
+            for name in list(new.headers):
+                if name.lower() in ("authorization", "cookie", "proxy-authorization"):
+                    del new.headers[name]
+        return new
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # leave the 3xx as the response
+
+
 class UrllibClient(HttpClient):
+    def __init__(self, follow_redirects=True, **kwargs):
+        super().__init__(**kwargs)
+        self.follow_redirects = follow_redirects
+        self._opener = urllib.request.build_opener(
+            RedirectHandler() if follow_redirects else _NoRedirects())
+
     def _send(self, method, url, headers, body, timeout):
         timeout = socket_timeout(timeout)
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return Response(resp.status, list(resp.headers.items()), resp.read(), url)
+            with self._opener.open(req, timeout=timeout) as resp:
+                return Response(resp.status, list(resp.headers.items()), resp.read(), resp.geturl())
         except urllib.error.HTTPError as exc:
             # An error status is still a response; the caller decides whether to raise.
             try:
@@ -36,8 +89,8 @@ class UrllibClient(HttpClient):
     def _open_stream(self, method, url, headers, body, timeout):
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            resp = urllib.request.urlopen(req, timeout=socket_timeout(timeout))
-            return StreamResponse(resp.status, list(resp.headers.items()), resp, url)
+            resp = self._opener.open(req, timeout=socket_timeout(timeout))
+            return StreamResponse(resp.status, list(resp.headers.items()), resp, resp.geturl())
         except urllib.error.HTTPError as exc:
             return StreamResponse(exc.code, list(exc.headers.items()), exc, url)
         except urllib.error.URLError as exc:
