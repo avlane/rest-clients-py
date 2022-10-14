@@ -52,6 +52,31 @@ class LinkHeaderTests(unittest.TestCase):
         header = '<http://x/a?b=1,2>; title="Next page"; rel=next'
         self.assertEqual(parse_link_header(header), {"next": "http://x/a?b=1,2"})
 
+    def test_quoted_values_may_contain_commas_semicolons_and_angle_brackets(self):
+        header = ('<http://x/a?page=1>; title="one, <two>; three"; rel="prev", '
+                  '<http://x/a?page=3>; rel="next"')
+        self.assertEqual(parse_link_header(header),
+                         {"prev": "http://x/a?page=1", "next": "http://x/a?page=3"})
+
+    def test_several_relations_in_one_rel(self):
+        self.assertEqual(parse_link_header('<http://x/p2>; rel="prev next"'),
+                         {"prev": "http://x/p2", "next": "http://x/p2"})
+
+    def test_case_spacing_and_escapes(self):
+        header = '<http://x/n> ;  REL = "Next" ; title="say \\"hi\\""'
+        self.assertEqual(parse_link_header(header), {"next": "http://x/n"})
+
+    def test_first_relation_wins(self):
+        self.assertEqual(parse_link_header('<http://x/1>; rel=next, <http://x/2>; rel=next'),
+                         {"next": "http://x/1"})
+
+    def test_malformed_pieces_are_skipped(self):
+        header = 'garbage, <http://x/ok>; rel="next", <broken; rel="x"'
+        self.assertEqual(parse_link_header(header), {"next": "http://x/ok"})
+
+    def test_link_without_rel_is_ignored(self):
+        self.assertEqual(parse_link_header('<http://x/a>; title="t"'), {})
+
     def test_empty(self):
         self.assertEqual(parse_link_header(None), {})
         self.assertEqual(parse_link_header(""), {})

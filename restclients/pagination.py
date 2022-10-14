@@ -6,29 +6,95 @@ callers can stop early without fetching every page.
 
 import re
 
-_LINK_SPLIT = re.compile(r",\s*(?=<)")
-_LINK_PARAM = re.compile(r';\s*([A-Za-z*][\w*-]*)\s*=\s*(?:"([^"]*)"|([^\s;,]+))')
+_TOKEN = re.compile(r"[^\s;,=<>\"]+")
+
+
+def _scan_links(value):
+    """Yield ``(url, {param: value})`` for each link in an RFC 8288 header.
+
+    A small scanner instead of a regex split: quoted-string parameter values may
+    contain commas, semicolons and ``<``, which a split on commas would cut apart.
+    """
+    pos, n = 0, len(value)
+    while pos < n:
+        while pos < n and value[pos] in " \t,":
+            pos += 1
+        if pos >= n:
+            return
+        if value[pos] != "<":
+            # malformed: skip to the next comma outside quotes
+            pos = _skip_junk(value, pos)
+            continue
+        end = value.find(">", pos)
+        if end == -1:
+            return
+        url, pos, params = value[pos + 1:end], end + 1, {}
+        while pos < n:
+            while pos < n and value[pos] in " \t":
+                pos += 1
+            if pos >= n or value[pos] == ",":
+                break
+            if value[pos] != ";":
+                pos = _skip_junk(value, pos)
+                break
+            pos += 1
+            while pos < n and value[pos] in " \t":
+                pos += 1
+            match = _TOKEN.match(value, pos)
+            if not match:
+                continue
+            name, pos = match.group(0).lower(), match.end()
+            while pos < n and value[pos] in " \t":
+                pos += 1
+            param = ""
+            if pos < n and value[pos] == "=":
+                pos += 1
+                while pos < n and value[pos] in " \t":
+                    pos += 1
+                if pos < n and value[pos] == '"':
+                    pos += 1
+                    chars = []
+                    while pos < n and value[pos] != '"':
+                        if value[pos] == "\\" and pos + 1 < n:
+                            pos += 1
+                        chars.append(value[pos])
+                        pos += 1
+                    pos += 1  # closing quote
+                    param = "".join(chars)
+                else:
+                    bare = _TOKEN.match(value, pos)
+                    if bare:
+                        param, pos = bare.group(0), bare.end()
+            params.setdefault(name, param)
+        yield url, params
+
+
+def _skip_junk(value, pos):
+    in_quotes = False
+    while pos < len(value):
+        char = value[pos]
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == "," and not in_quotes:
+            return pos
+        pos += 1
+    return pos
 
 
 def parse_link_header(value):
     """Parse an RFC 8288 ``Link`` header into ``{rel: url}``.
 
-    Only the first ``rel`` of each link is kept, and links without a ``rel``
-    are ignored. Returns ``{}`` for an empty or missing header.
+    A link whose ``rel`` lists several relations (``rel="prev next"``) is
+    registered under each of them. If the same relation appears twice the first
+    one wins. Links without a ``rel`` are ignored. Returns ``{}`` for an empty
+    or missing header.
     """
     links = {}
     if not value:
         return links
-    for part in _LINK_SPLIT.split(value.strip()):
-        match = re.match(r"\s*<([^>]*)>(.*)", part, re.S)
-        if not match:
-            continue
-        url, rest = match.groups()
-        for name, quoted, bare in _LINK_PARAM.findall(rest):
-            if name.lower() == "rel":
-                rel = (quoted or bare).split()[0].lower()
-                links.setdefault(rel, url)
-                break
+    for url, params in _scan_links(value):
+        for rel in params.get("rel", "").lower().split():
+            links.setdefault(rel, url)
     return links
 
 
