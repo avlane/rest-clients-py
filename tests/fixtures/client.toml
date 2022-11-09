@@ -1,0 +1,19 @@
+[client]
+base_url = "https://api.example.test"
+timeout = [2.5, 8]
+transport = "keepalive"
+
+[client.headers]
+X-Team = "docs"
+
+[retry]
+max_attempts = 4
+backoff_base = 0.25
+
+[rate_limit]
+per_second = 20
+burst = 5
+
+[auth]
+type = "bearer"
+token_env = "EXAMPLE_API_TOKEN"
