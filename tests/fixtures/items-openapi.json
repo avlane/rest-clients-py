@@ -1,0 +1,117 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Items API", "version": "1.2.0", "description": "The test server, described."},
+  "servers": [{"url": "https://api.example.test"}],
+  "paths": {
+    "/items": {
+      "get": {
+        "operationId": "listItems",
+        "summary": "List every item",
+        "tags": ["items"],
+        "responses": {
+          "200": {"description": "All items",
+                  "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Item"}}}}}
+        }
+      },
+      "post": {
+        "operationId": "createItem",
+        "summary": "Create an item",
+        "tags": ["items"],
+        "requestBody": {"required": true,
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ItemInput"}}}},
+        "responses": {
+          "201": {"description": "Created",
+                  "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}},
+          "400": {"$ref": "#/components/responses/BadRequest"}
+        }
+      }
+    },
+    "/items/{itemId}": {
+      "parameters": [{"$ref": "#/components/parameters/ItemId"}],
+      "get": {
+        "operationId": "getItem",
+        "summary": "Fetch one item",
+        "tags": ["items"],
+        "responses": {
+          "200": {"description": "The item",
+                  "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "patch": {
+        "operationId": "updateItem",
+        "summary": "Change an item's name or price",
+        "tags": ["items"],
+        "requestBody": {"required": true,
+                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ItemInput"}}}},
+        "responses": {
+          "200": {"description": "The updated item",
+                  "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Item"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      },
+      "delete": {
+        "operationId": "deleteItem",
+        "summary": "Delete an item",
+        "tags": ["items"],
+        "responses": {"204": {"description": "Deleted"}, "404": {"$ref": "#/components/responses/NotFound"}}
+      }
+    },
+    "/pages": {
+      "get": {
+        "summary": "Items, one page at a time",
+        "tags": ["items"],
+        "parameters": [
+          {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "default": 1}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10}}
+        ],
+        "responses": {
+          "200": {"description": "A page",
+                  "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ItemPage"}}}}
+        }
+      }
+    },
+    "/orders/{orderId}": {
+      "get": {
+        "operationId": "getOrder",
+        "summary": "Fetch an order with its items",
+        "tags": ["orders"],
+        "parameters": [{"name": "orderId", "in": "path", "required": true, "schema": {"type": "integer"}},
+                       {"name": "X-Trace", "in": "header", "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The order",
+                  "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Order"}}}},
+          "404": {"$ref": "#/components/responses/NotFound"}
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ItemId": {"name": "itemId", "in": "path", "required": true, "description": "Item id",
+                 "schema": {"type": "integer"}}
+    },
+    "responses": {
+      "NotFound": {"description": "No such resource",
+                   "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "BadRequest": {"description": "Invalid input",
+                     "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+    },
+    "schemas": {
+      "Error": {"type": "object", "required": ["error"], "properties": {"error": {"type": "string"}}},
+      "Item": {"type": "object", "required": ["id", "name"],
+               "properties": {"id": {"type": "integer"}, "name": {"type": "string"},
+                              "price": {"type": "integer", "default": 0}}},
+      "ItemInput": {"type": "object", "properties": {"name": {"type": "string"},
+                                                     "price": {"type": "integer"}}},
+      "ItemPage": {"type": "object", "required": ["items", "page", "limit", "total"],
+                   "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/Item"}},
+                                  "page": {"type": "integer"}, "limit": {"type": "integer"},
+                                  "total": {"type": "integer"}}},
+      "Order": {"type": "object", "required": ["id", "customer"],
+                "properties": {"id": {"type": "integer"}, "customer": {"type": "string"},
+                               "note": {"type": "string", "nullable": true},
+                               "items": {"type": "array", "items": {"$ref": "#/components/schemas/Item"}}}}
+    }
+  }
+}
