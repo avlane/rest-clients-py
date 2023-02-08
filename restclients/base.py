@@ -37,6 +37,16 @@ class ApiClient:
             close()
 
     # -- building blocks for subclasses -----------------------------------
+    def _call(self, method: str, path: str, params: dict[str, Any] | None = None,
+              headers: dict[str, Any] | None = None, body: Any = None) -> Any:
+        """One request for generated clients: drops None-valued params/headers, returns JSON.
+
+        An empty body (204) gives None.
+        """
+        params = {k: v for k, v in (params or {}).items() if v is not None}
+        headers = {k: str(v) for k, v in (headers or {}).items() if v is not None}
+        return self.http.request(method, path, params=params, headers=headers, json=body).json()
+
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         return self.http.get_json(path, params=params)
 
