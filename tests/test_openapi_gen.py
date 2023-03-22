@@ -4,13 +4,15 @@ import unittest
 
 from restclients.base import ApiClient
 from restclients.openapi import load_spec, parse_spec
-from restclients.openapi_gen import class_name, generate_client, snake_case
+from restclients.openapi import SpecError
+from restclients.openapi_gen import (class_name, generate_client, generate_models, python_type,
+                                     snake_case)
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "items-openapi.json")
 
 
 def build(source):
-    namespace = {}
+    namespace = {"__name__": "generated_client"}
     exec(compile(source, "<generated>", "exec"), namespace)
     return namespace
 
@@ -67,6 +69,54 @@ class GeneratedSourceTests(unittest.TestCase):
 
     def test_generation_is_deterministic(self):
         self.assertEqual(self.source, generate_client(load_spec(FIXTURE)))
+
+
+class ModelGenerationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.spec = load_spec(FIXTURE)
+        cls.source = generate_models(cls.spec)
+        cls.namespace = build("from dataclasses import dataclass\nfrom typing import *\n"
+                              "from restclients.models import Model\n" + cls.source)
+
+    def test_dependencies_come_first(self):
+        self.assertLess(self.source.index("class Item(Model)"), self.source.index("class ItemPage(Model)"))
+        self.assertLess(self.source.index("class Item(Model)"), self.source.index("class Order(Model)"))
+
+    def test_required_optional_nullable_and_defaults(self):
+        import dataclasses
+        fields = {f.name: f for f in dataclasses.fields(self.namespace["Order"])}
+        self.assertEqual(list(fields), ["id", "customer", "note", "items"])
+        self.assertIs(fields["id"].default, dataclasses.MISSING)
+        self.assertIsNone(fields["note"].default)
+        item = self.namespace["Item"](id=1, name="x")
+        self.assertEqual(item.price, 0)               # the schema's default
+
+    def test_all_optional_input_model(self):
+        self.assertIsNone(self.namespace["ItemInput"]().name)
+
+    def test_type_mapping(self):
+        models = {"Item"}
+        cases = [({"type": "integer"}, "int"), ({"type": "number"}, "float"), ({"type": "boolean"}, "bool"),
+                 ({"type": "array", "items": {"type": "string"}}, "List[str]"),
+                 ({"type": "array", "items": {"$ref": "#/components/schemas/Item"}}, "List[Item]"),
+                 ({"type": "object"}, "Dict[str, Any]"), ({}, "Any"),
+                 ({"$ref": "#/components/schemas/Error"}, "Any")]
+        for schema, expected in cases:
+            with self.subTest(schema=schema):
+                self.assertEqual(python_type(schema, models), expected)
+
+    def test_recursive_schema_is_rejected(self):
+        spec = parse_spec({"openapi": "3.0.0", "components": {"schemas": {
+            "Node": {"type": "object", "properties": {"next": {"$ref": "#/components/schemas/Node"}}}}}})
+        with self.assertRaisesRegex(SpecError, "recursive"):
+            generate_models(spec)
+
+    def test_unusable_property_name_is_rejected(self):
+        spec = parse_spec({"openapi": "3.0.0", "components": {"schemas": {
+            "Thing": {"type": "object", "properties": {"class": {"type": "string"}}}}}})
+        with self.assertRaisesRegex(SpecError, "cannot be a dataclass field"):
+            generate_models(spec)
 
 
 class EdgeCaseTests(unittest.TestCase):

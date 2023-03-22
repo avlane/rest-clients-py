@@ -7,6 +7,7 @@ hints, and never touch the transport.
 """
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Iterator
 from typing import Any, Dict
 
@@ -45,6 +46,9 @@ class ApiClient:
         """
         params = {k: v for k, v in (params or {}).items() if v is not None}
         headers = {k: str(v) for k, v in (headers or {}).items() if v is not None}
+        if dataclasses.is_dataclass(body) and not isinstance(body, type):
+            # model instances are sent without their unset (None) fields
+            body = {k: v for k, v in dataclasses.asdict(body).items() if v is not None}
         return self.http.request(method, path, params=params, headers=headers, json=body).json()
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
