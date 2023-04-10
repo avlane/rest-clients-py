@@ -249,3 +249,51 @@ def generate_client(spec, name=None):
     methods = [_method_source(op, n, models) for op, n in zip(spec.operations, method_names)]
     out.append("\n\n".join(methods) if methods else "    pass")
     return "\n".join(out) + "\n"
+
+
+def main(argv=None, stdout=None, stderr=None):
+    """Command line: ``python -m restclients.openapi_gen SPEC.json [-o client.py] [--check]``."""
+    import argparse
+    import sys
+
+    stdout = stdout or sys.stdout
+    stderr = stderr or sys.stderr
+    parser = argparse.ArgumentParser(prog="python -m restclients.openapi_gen",
+                                     description="Generate a client module from an OpenAPI 3 JSON file.")
+    parser.add_argument("spec", help="path to the OpenAPI JSON document")
+    parser.add_argument("-o", "--output", help="write here instead of standard output")
+    parser.add_argument("--class-name", help="name of the generated client class")
+    parser.add_argument("--check", action="store_true",
+                        help="do not write; exit 1 if --output is missing or out of date")
+    args = parser.parse_args(argv)
+
+    from restclients.openapi import SpecError, load_spec
+    try:
+        source = generate_client(load_spec(args.spec), args.class_name)
+    except SpecError as exc:
+        print("error: %s" % exc.message, file=stderr)
+        return 2
+    if args.check:
+        if not args.output:
+            print("error: --check needs --output", file=stderr)
+            return 2
+        try:
+            with open(args.output, encoding="utf-8") as f:
+                current = f.read()
+        except OSError:
+            current = None
+        if current != source:
+            print("%s is out of date; regenerate it" % args.output, file=stderr)
+            return 1
+        return 0
+    if args.output:
+        with open(args.output, "w", encoding="utf-8") as f:
+            f.write(source)
+    else:
+        stdout.write(source)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
