@@ -34,8 +34,11 @@ class WebhookReceiver:
     """Listen on ``127.0.0.1`` (put a reverse proxy in front for anything else)."""
 
     def __init__(self, path="/webhooks", port=0, verifier=None, on_event=None,
-                 max_body=1024 * 1024, clock=time.time):
+                 max_body=1024 * 1024, clock=time.time, dedupe_header="X-Event-Id"):
         self.path = path
+        self.dedupe_header = dedupe_header
+        self._seen_ids = set()
+        self.duplicates = 0
         self.verifier = verifier
         self.on_event = on_event
         self.max_body = max_body
@@ -98,6 +101,15 @@ class WebhookReceiver:
                 self.rejected.append((exc.status, exc.message))
                 self._cond.notify_all()
             return exc.status, {"error": exc.message}
+        event_id = next((v for k, v in headers.items() if self.dedupe_header
+                         and k.lower() == self.dedupe_header.lower()), None)
+        with self._cond:
+            if event_id is not None:
+                if event_id in self._seen_ids:
+                    # providers retry; answer 200 again but do not process the event twice
+                    self.duplicates += 1
+                    return 200, {"received": True, "duplicate": True}
+                self._seen_ids.add(event_id)
         event = Event(payload, headers, self._clock())
         with self._cond:
             self.events.append(event)
