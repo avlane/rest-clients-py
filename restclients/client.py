@@ -84,10 +84,11 @@ class HttpClient(RequestBuilder):
     """
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
-                 sleep=time.sleep, rate_limiter=None, cache=None, logger=None, request_id_header="X-Request-ID"):
+                 sleep=time.sleep, rate_limiter=None, cache=None, logger=None, request_id_header="X-Request-ID", idempotency_header=None):
         super().__init__(base_url, headers, timeout, auth)
         self.logger = logger or log
         self.request_id_header = request_id_header
+        self.idempotency_header = idempotency_header
         self.cache = cache
         self.retry = retry
         self.rate_limiter = rate_limiter
@@ -118,18 +119,20 @@ class HttpClient(RequestBuilder):
                                files)
         method, url, send_headers = prepared.method, prepared.url, prepared.headers
         request_id = self._request_id(send_headers)
+        keyed = self._idempotency_key(method, send_headers)
         body, timeout, auth = prepared.body, prepared.timeout, prepared.auth
         cache_key = url if method == "GET" and self.cache is not None else None
         if cache_key is not None:
             for name, value in self.cache.conditional_headers(cache_key).items():
                 send_headers.setdefault(name, value)
-        response = self._send_with_retries(method, url, send_headers, body, timeout, request_id)
+        response = self._send_with_retries(method, url, send_headers, body, timeout, request_id,
+                                           keyed)
         if response.status == 401 and hasattr(auth, "invalidate"):
             # The token may have been revoked or expired early: get a fresh one and try once more.
             auth.invalidate()
             auth.apply(send_headers)
             response = self._send_with_retries(method, url, send_headers, body, timeout,
-                                               request_id)
+                                               request_id, keyed)
         if cache_key is not None:
             if response.status == 304 and cache_key in self.cache:
                 response = self.cache.revalidated(cache_key, response)
@@ -175,6 +178,22 @@ class HttpClient(RequestBuilder):
             raise error_for_status(response.status, prepared.url, body, response.headers.as_dict())
         return response
 
+    def _idempotency_key(self, method, send_headers):
+        """Attach an Idempotency-Key to POST/PATCH when enabled; True if the call carries one.
+
+        The key is created once per call, so every retry of it repeats the same
+        key and the server can recognise (and not repeat) the work. A caller may
+        supply its own key in ``headers=``.
+        """
+        name = self.idempotency_header
+        if not name:
+            return False
+        present = any(k.lower() == name.lower() for k in send_headers)
+        if not present and method in ("POST", "PATCH"):
+            send_headers[name] = uuid.uuid4().hex
+            present = True
+        return present
+
     def _request_id(self, send_headers):
         """Id shared by all attempts of one call: caller's header, else the context's, else new."""
         name = self.request_id_header
@@ -203,12 +222,14 @@ class HttpClient(RequestBuilder):
         self.logger.log(level, "%s %s -> %s", method, safe_url, status if status else "failed",
                         extra=info)
 
-    def _send_with_retries(self, method, url, headers, body, timeout, request_id=None):
+    def _send_with_retries(self, method, url, headers, body, timeout, request_id=None,
+                           keyed=False):
         policy = self.retry
         attempt = 0
         while True:
             attempt += 1
-            retryable = (policy is not None and policy.should_retry_method(method)
+            # a request carrying an idempotency key is safe to repeat whatever its method
+            retryable = (policy is not None and (keyed or policy.should_retry_method(method))
                          and policy.attempts_left(attempt))
             if self.rate_limiter is not None:
                 self.rate_limiter.acquire()  # retries count against the limit too
