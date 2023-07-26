@@ -13,6 +13,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote_plus, urlsplit
 
+from restclients.idempotency import IdempotencyStore, fingerprint_of
+
 ITEMS = [{"id": n, "name": "item-%02d" % n, "price": n * 5} for n in range(1, 24)]
 
 
@@ -446,6 +448,40 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def h_payments(self):
+        """POST /payments creates a payment, honouring Idempotency-Key.
+
+        ``?drop_response=1`` processes the request but hangs up instead of answering the
+        first time, which is exactly the situation idempotency keys exist for.
+        """
+        if self.command == "GET":
+            return self.send_json(self.server.payments)
+        key = self.headers.get("Idempotency-Key")
+        store = self.server.idempotency
+        if key:
+            state, entry = store.begin(key, fingerprint_of(self.command, self.path.split("?")[0], self.body))
+            if state == "replay":
+                status, payload = entry.response
+                return self.send_json(payload, status, {"Idempotent-Replayed": "true"})
+            if state == "conflict":
+                return self.send_json({"error": "idempotency key reused with a different request"}, 422)
+            if state == "in_progress":
+                return self.send_json({"error": "request in progress"}, 409, {"Retry-After": "1"})
+        data = self._json_body()
+        if not isinstance(data, dict) or not isinstance(data.get("amount"), int) or data["amount"] <= 0:
+            if key:
+                store.abandon(key)
+            return self.send_json({"error": "amount must be a positive integer"}, 400)
+        with self.server.lock:
+            payment = {"id": len(self.server.payments) + 1, "amount": data["amount"]}
+            self.server.payments.append(payment)
+        if key:
+            store.complete(key, (201, payment))
+        if self.q("drop_response") and self._count("drop-payment:" + (key or "-")) == 1:
+            self.close_connection = True          # processed, but the client never hears about it
+            return
+        self.send_json(payment, 201)
+
     # ROUTES-END
 
 
@@ -456,6 +492,8 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.payments = []
+        self.httpd.idempotency = IdempotencyStore()
         self.httpd.connections = 0
         self.httpd.in_flight = 0
         self.httpd.max_in_flight = 0
@@ -471,6 +509,10 @@ class ApiServer:
     @property
     def url(self):
         return "http://127.0.0.1:%d" % self.httpd.server_address[1]
+
+    @property
+    def payments(self):
+        return self.httpd.payments
 
     @property
     def connections(self):
