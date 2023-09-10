@@ -84,11 +84,13 @@ class HttpClient(RequestBuilder):
     """
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
-                 sleep=time.sleep, rate_limiter=None, cache=None, logger=None, request_id_header="X-Request-ID", idempotency_header=None):
+                 sleep=time.sleep, rate_limiter=None, cache=None, logger=None, request_id_header="X-Request-ID", idempotency_header=None,
+                 breaker=None):
         super().__init__(base_url, headers, timeout, auth)
         self.logger = logger or log
         self.request_id_header = request_id_header
         self.idempotency_header = idempotency_header
+        self.breaker = breaker
         self.cache = cache
         self.retry = retry
         self.rate_limiter = rate_limiter
@@ -231,18 +233,28 @@ class HttpClient(RequestBuilder):
             # a request carrying an idempotency key is safe to repeat whatever its method
             retryable = (policy is not None and (keyed or policy.should_retry_method(method))
                          and policy.attempts_left(attempt))
+            if self.breaker is not None:
+                self.breaker.allow()         # raises CircuitOpen, which is never retried
             if self.rate_limiter is not None:
                 self.rate_limiter.acquire()  # retries count against the limit too
             started = time.perf_counter()
             try:
                 response = self._send(method, url, headers, body, timeout)
             except TransportError as exc:
+                if self.breaker is not None:
+                    self.breaker.record_failure()
                 self._log(logging.WARNING if retryable else logging.ERROR, method, url, None,
                           started, attempt, error=exc.message, request_id=request_id)
                 if not retryable:
                     raise
                 self._sleep(policy.wait_seconds(attempt))
                 continue
+            if self.breaker is not None:
+                # 5xx means the service is unhealthy; 4xx and 429 mean it is up and answering
+                if response.status >= 500:
+                    self.breaker.record_failure()
+                else:
+                    self.breaker.record_success()
             self._log(logging.INFO if response.status < 400 else logging.WARNING, method, url,
                       response.status, started, attempt, request_id=request_id, response=response)
             if retryable and policy.should_retry_status(response.status):
