@@ -482,6 +482,32 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_json(payment, 201)
 
+    def h_bulk(self):
+        """POST /bulk {"items": [...]}: at most 10 per request; honours Idempotency-Key."""
+        data = self._json_body()
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return self.send_json({"error": "items must be a list"}, 400)
+        if len(items) > 10:
+            return self.send_json({"error": "at most 10 items per request"}, 413)
+        key = self.headers.get("Idempotency-Key")
+        store = self.server.idempotency
+        if key:
+            state, entry = store.begin(key, fingerprint_of("POST", "/bulk", self.body))
+            if state == "replay":
+                return self.send_json(entry.response[1], entry.response[0], {"Idempotent-Replayed": "true"})
+            if state == "conflict":
+                return self.send_json({"error": "idempotency key reused with a different request"}, 422)
+        with self.server.lock:
+            ids = []
+            for item in items:
+                self.server.bulk_records.append(item)
+                ids.append(len(self.server.bulk_records))
+        result = {"accepted": len(items), "ids": ids}
+        if key:
+            store.complete(key, (200, result))
+        self.send_json(result)
+
     # ROUTES-END
 
 
@@ -492,6 +518,7 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.bulk_records = []
         self.httpd.payments = []
         self.httpd.idempotency = IdempotencyStore()
         self.httpd.connections = 0
@@ -509,6 +536,10 @@ class ApiServer:
     @property
     def url(self):
         return "http://127.0.0.1:%d" % self.httpd.server_address[1]
+
+    @property
+    def bulk_records(self):
+        return self.httpd.bulk_records
 
     @property
     def payments(self):

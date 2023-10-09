@@ -4,20 +4,20 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "rest-clients-py"
-version = "0.6.0"
+version = "0.7.0"
 description = "Notes and small building blocks for consuming REST APIs from Python"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Avery Lane" }]
-requires-python = ">=3.7"
+requires-python = ">=3.8"
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 # The core runs on the standard library alone.
 dependencies = []
