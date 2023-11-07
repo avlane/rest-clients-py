@@ -64,6 +64,43 @@ class ParseRetryAfterTests(unittest.TestCase):
     def test_http_date_in_the_past_is_zero(self):
         self.assertEqual(parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT", now=1445412999), 0.0)
 
+    def test_unknown_local_offset_means_utc_whatever_the_machine_timezone(self):
+        # "-0000" is RFC 2822 for "UTC, local zone unknown"; email.utils returns a *naive*
+        # datetime for it, and .timestamp() on a naive value assumes the machine's own zone.
+        import os
+        import time
+        if not hasattr(time, "tzset"):
+            self.skipTest("time.tzset is not available on this platform")
+        old = os.environ.get("TZ")
+        self.addCleanup(self._restore_tz, old)
+        os.environ["TZ"] = "America/Los_Angeles"
+        time.tzset()
+        # 1445412480 is Wed, 21 Oct 2015 07:28:00 UTC
+        self.assertEqual(parse_retry_after("Wed, 21 Oct 2015 07:28:00 -0000", now=1445412470), 10.0)
+        self.assertEqual(parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT", now=1445412470), 10.0)
+
+    @staticmethod
+    def _restore_tz(old):
+        import os
+        import time
+        if old is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old
+        time.tzset()
+
+    def test_numeric_forms(self):
+        self.assertEqual(parse_retry_after("1.5"), 1.5)
+        self.assertEqual(parse_retry_after("007"), 7.0)
+        self.assertIsNone(parse_retry_after("-5"))
+        self.assertIsNone(parse_retry_after("1e3"))
+        self.assertIsNone(parse_retry_after("nan"))
+        self.assertIsNone(parse_retry_after("inf"))
+
+    def test_offset_dates(self):
+        # 09:28:00 +0200 is 07:28:00 UTC
+        self.assertEqual(parse_retry_after("Wed, 21 Oct 2015 09:28:00 +0200", now=1445412470), 10.0)
+
     def test_garbage_and_missing(self):
         self.assertIsNone(parse_retry_after(None))
         self.assertIsNone(parse_retry_after(""))

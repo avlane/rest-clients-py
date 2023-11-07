@@ -4,18 +4,24 @@ This module is pure decision-making. It never sleeps or sends anything, so it
 is easy to test; the client owns the loop (see ``HttpClient.request``).
 """
 import random
+import re
 import time
+from datetime import timezone
 from email.utils import parsedate_to_datetime
 
 IDEMPOTENT_METHODS = frozenset(["GET", "HEAD", "PUT", "DELETE", "OPTIONS", "TRACE"])
 RETRY_STATUSES = frozenset([429, 500, 502, 503, 504])
 
 
+_DECIMAL = re.compile(r"\d+(\.\d+)?$")
+
+
 def parse_retry_after(value, now=None):
     """Seconds to wait according to a ``Retry-After`` header, or None.
 
     The header is either delta-seconds (``120``) or an HTTP-date
-    (``Wed, 21 Oct 2015 07:28:00 GMT``). Dates in the past give 0.
+    (``Wed, 21 Oct 2015 07:28:00 GMT``). Dates in the past give 0. A few servers
+    send fractional seconds (``1.5``), which is accepted. Anything else is None.
     ``now`` is a timestamp, injectable for tests.
     """
     if value is None:
@@ -23,12 +29,16 @@ def parse_retry_after(value, now=None):
     value = str(value).strip()
     if not value:
         return None
-    if value.isdigit():
+    if _DECIMAL.match(value):
         return float(value)
     try:
         when = parsedate_to_datetime(value)
     except (TypeError, ValueError):
         return None
+    if when.tzinfo is None:
+        # "-0000" means UTC with an unknown local zone; email.utils then returns a naive
+        # datetime, and naive.timestamp() would silently use this machine's timezone.
+        when = when.replace(tzinfo=timezone.utc)
     current = now if now is not None else time.time()
     return max(0.0, when.timestamp() - current)
 
