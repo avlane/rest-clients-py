@@ -1,7 +1,7 @@
 # urllib vs requests vs httpx vs aiohttp
 
 Notes written while adding the fourth client. Behaviour listed is for the
-versions in `requirements.txt` as of this writing (requests 2.26, httpx 0.20,
+versions in `requirements.txt` as of this writing (requests 2.31, httpx 0.25,
 aiohttp 3.8). "Executed here" says whether this repo's tests ever ran the real
 library; see the README for the full list.
 

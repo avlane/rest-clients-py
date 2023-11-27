@@ -49,7 +49,10 @@ Run the tests with `python3 -m unittest discover`.
 - `restclients/recorder.py` VCR-style `RecordingClient` / `ReplayClient` with scrubbing
 - `restclients/config.py` build a client from a TOML file
 - `restclients/testing.py` fake sessions for tests that must not touch the network
-- `docs/` library comparison, connection pooling, OAuth2 PKCE notes
+- `restclients/openapi.py`, `openapi_gen.py` read an OpenAPI 3 JSON file and generate a client with models
+- `restclients/webhooks.py`, `signatures.py`, `webhook_sender.py` webhook receiver, HMAC verification and signed delivery
+- `restclients/idempotency.py`, `breaker.py`, `bulk.py` idempotency store, circuit breaker, batched bulk posts
+- `docs/` library comparison, connection pooling, OAuth2 PKCE, webhooks and idempotency notes
 - `tools/record_fixtures.py` regenerates `tests/fixtures/`
 
 ## A taste
