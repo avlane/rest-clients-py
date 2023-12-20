@@ -16,7 +16,9 @@ client takes an injected session, and the tests use fakes for them. So:
 | `urllib.request` (`UrllibClient`, `basics`) | **for real**, over sockets, against a local `ThreadingHTTPServer` |
 | `http.client` (`KeepAliveClient`) | **for real**: connection reuse, pool limits, stale-connection recovery (the server counts TCP connections) |
 | `asyncio` (`ThreadedAsyncClient`, `gather_bounded`) | **for real**: the urllib client driven from an event loop against the local server |
-| everything transport independent (retries, rate limiting, caching, pagination, auth, OAuth2, PKCE, streaming, uploads, recorder, config) | **for real**, through the urllib client and the local server |
+| everything transport independent (retries, rate limiting, caching, pagination, auth, OAuth2, PKCE, streaming, uploads, recorder, config, circuit breaker, idempotency keys, bulk batching) | **for real**, through the urllib client and the local server |
+| webhook receiver, sender and HMAC verification | **for real**, over localhost sockets |
+| OpenAPI reader and client generator | **for real**: the generated code is executed against the local server, using a hand-written spec that describes that server |
 | `requests` (`RequestsClient`) | **fakes**: a fake session records the call and returns canned responses. |
 | `httpx` (`HttpxClient`, `AsyncHttpxClient`) | **fakes** |
 | `aiohttp` (`AiohttpClient`) | **fakes** |
@@ -27,7 +29,8 @@ challenges, flaky 503s, 429s with `Retry-After`, dropped connections, ETags,
 redirects, byte ranges, multipart uploads and a small OAuth2 server (client
 credentials, authorization code with PKCE, refresh tokens).
 
-Run the tests with `python3 -m unittest discover`.
+Run the tests with `python3 -m unittest discover`. To see signed webhooks working end to end:
+`python3 -m examples.webhook_demo`.
 
 ## Layout
 
