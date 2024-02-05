@@ -139,3 +139,68 @@ def run_benchmark(base_url, requests=100, concurrency=10, delay=0.0, scenarios=N
     for _ in range(warmup):
         warm.get(path, params=params)
     return [SCENARIOS[name](base_url, path, params, requests, concurrency) for name in names]
+
+
+def format_table(results):
+    """Plain-text table, one row per scenario, fastest wall time first."""
+    rows = [r.as_dict() for r in sorted(results, key=lambda r: r.seconds)]
+    headers = [("name", "scenario", "<"), ("concurrency", "conc", ">"), ("requests", "reqs", ">"),
+               ("seconds", "seconds", ">"), ("rps", "req/s", ">"), ("p50_ms", "p50 ms", ">"),
+               ("p95_ms", "p95 ms", ">"), ("errors", "errors", ">")]
+    cells = [[str(row[key]) for key, _, _ in headers] for row in rows]
+    widths = [max(len(title), *(len(c[i]) for c in cells)) if cells else len(title)
+              for i, (_, title, _) in enumerate(headers)]
+
+    def line(values):
+        return "  ".join(("%-*s" if align == "<" else "%*s") % (w, v)
+                         for (_, _, align), w, v in zip(headers, widths, values))
+
+    out = [line([title for _, title, _ in headers]), line(["-" * w for w in widths])]
+    out += [line(c) for c in cells]
+    return "\n".join(out)
+
+
+def main(argv=None, stdout=None):
+    """``python -m restclients.bench [--url URL | (starts the test server)] ...``"""
+    import argparse
+    import json
+    import sys
+
+    stdout = stdout or sys.stdout
+    parser = argparse.ArgumentParser(prog="python -m restclients.bench", description=__doc__.split("\n")[0])
+    parser.add_argument("--url", help="base URL of a server to hit (default: start the test server)")
+    parser.add_argument("-n", "--requests", type=int, default=200)
+    parser.add_argument("-c", "--concurrency", type=int, default=10)
+    parser.add_argument("--delay", type=float, default=0.0,
+                        help="server-side latency per request in seconds (test server only)")
+    parser.add_argument("--scenario", action="append", choices=sorted(SCENARIOS),
+                        help="repeatable; default: all")
+    parser.add_argument("--json", action="store_true", help="print JSON instead of a table")
+    args = parser.parse_args(argv)
+
+    server = None
+    url = args.url
+    if url is None:
+        try:
+            from tests.server import ApiServer
+        except ImportError:
+            parser.error("no --url given and the test server is not importable "
+                         "(run from the repository root)")
+        server = ApiServer().__enter__()
+        url = server.url
+    try:
+        results = run_benchmark(url, args.requests, args.concurrency, args.delay, args.scenario)
+    finally:
+        if server is not None:
+            server.__exit__(None, None, None)
+    if args.json:
+        json.dump([r.as_dict() for r in results], stdout, indent=2)
+        stdout.write("\n")
+    else:
+        stdout.write(format_table(results) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

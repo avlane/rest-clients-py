@@ -1,6 +1,8 @@
+import io
+import json
 import unittest
 
-from restclients.bench import SCENARIOS, Result, run_benchmark
+from restclients.bench import SCENARIOS, Result, format_table, main, run_benchmark
 from tests.server import ApiServer
 
 
@@ -62,6 +64,37 @@ class RunBenchmarkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "nope"):
             run_benchmark("http://127.0.0.1:9", scenarios=["nope"])
         self.assertEqual(sorted(SCENARIOS), ["asyncio", "keepalive", "sequential", "threads"])
+
+
+class ReportTests(unittest.TestCase):
+    def test_table_is_sorted_by_time_and_aligned(self):
+        slow = Result("slow one", 10, 1, 5.0, [0.5] * 10, 0)
+        fast = Result("fast", 10, 4, 1.0, [0.1] * 10, 1)
+        lines = format_table([slow, fast]).splitlines()
+        self.assertEqual(len(lines), 4)
+        self.assertTrue(lines[0].startswith("scenario"))
+        self.assertTrue(lines[2].startswith("fast"))
+        self.assertTrue(lines[3].startswith("slow one"))
+        self.assertEqual(len({len(line) for line in lines}), 1)       # columns line up
+
+    def test_cli_table_and_json(self):
+        out = io.StringIO()
+        self.assertEqual(main(["-n", "6", "-c", "2", "--scenario", "sequential", "--scenario", "threads"], out), 0)
+        text = out.getvalue()
+        self.assertIn("urllib, sequential", text)
+        self.assertIn("urllib, threads", text)
+        self.assertNotIn("asyncio", text)
+        out = io.StringIO()
+        main(["-n", "4", "-c", "2", "--scenario", "keepalive", "--json"], out)
+        (row,) = json.loads(out.getvalue())
+        self.assertEqual((row["name"], row["requests"], row["errors"]), ("keep-alive pool, threads", 4, 0))
+
+    def test_cli_against_an_explicit_url(self):
+        with ApiServer() as server:
+            out = io.StringIO()
+            main(["--url", server.url, "-n", "3", "--scenario", "sequential", "--json"], out)
+            self.assertGreaterEqual(len(server.requests), 3 + 5)
+        self.assertEqual(json.loads(out.getvalue())[0]["requests"], 3)
 
 
 if __name__ == "__main__":
