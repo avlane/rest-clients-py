@@ -24,13 +24,20 @@ def make_requests_session(pool_connections=10, pool_maxsize=10, max_retries=0):
     return session
 
 
-def make_httpx_client(max_connections=100, max_keepalive_connections=20, **client_options):
-    """An ``httpx.Client`` with explicit connection limits."""
+def make_httpx_client(max_connections=100, max_keepalive_connections=20, http2=False,
+                      **client_options):
+    """An ``httpx.Client`` with explicit connection limits.
+
+    ``http2=True`` lets the client negotiate HTTP/2 with servers that support it
+    (see docs/http2.md); it needs ``pip install "httpx[http2]"``.
+    """
     import httpx
 
     limits = httpx.Limits(max_connections=max_connections,
                           max_keepalive_connections=max_keepalive_connections)
     client_options.setdefault("follow_redirects", True)  # httpx 0.20+ defaults to False
+    if http2:
+        client_options["http2"] = True
     return httpx.Client(limits=limits, **client_options)
 
 

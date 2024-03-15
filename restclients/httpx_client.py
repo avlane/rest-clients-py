@@ -11,12 +11,15 @@ from restclients.response import IterReader, Response, StreamResponse
 
 
 class HttpxClient(HttpClient):
-    def __init__(self, client=None, **kwargs):
+    def __init__(self, client=None, http2=False, **kwargs):
         super().__init__(**kwargs)
         if client is None:
             import httpx  # lazy: only needed when the caller did not inject a client
             # httpx 0.20 stopped following redirects by default; the other clients do, so match them
-            client = httpx.Client(follow_redirects=True)
+            options = {"follow_redirects": True}
+            if http2:
+                options["http2"] = True      # needs the optional extra: pip install "httpx[http2]"
+            client = httpx.Client(**options)
         self.client = client
 
     def _send(self, method, url, headers, body, timeout):

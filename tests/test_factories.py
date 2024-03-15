@@ -53,6 +53,17 @@ class FactoryTests(unittest.TestCase):
             session = factories.make_aiohttp_session(limit=30, limit_per_host=6)
         self.assertEqual(session.kwargs["connector"].kwargs, {"limit": 30, "limit_per_host": 6})
 
+    def test_http2_is_opt_in(self):
+        from restclients.async_client import AsyncHttpxClient
+        from restclients.httpx_client import HttpxClient
+        httpx = fake_module("httpx", Limits=Recorder, Client=Recorder, AsyncClient=Recorder)
+        with mock.patch.dict(sys.modules, {"httpx": httpx}):
+            self.assertNotIn("http2", factories.make_httpx_client().kwargs)
+            self.assertTrue(factories.make_httpx_client(http2=True).kwargs["http2"])
+            self.assertTrue(HttpxClient(http2=True).client.kwargs["http2"])
+            self.assertTrue(AsyncHttpxClient(http2=True).client.kwargs["http2"])
+            self.assertNotIn("http2", HttpxClient().client.kwargs)
+
     def test_default_httpx_clients_follow_redirects(self):
         from restclients.async_client import AsyncHttpxClient
         from restclients.httpx_client import HttpxClient

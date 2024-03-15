@@ -83,11 +83,14 @@ class ThreadedAsyncClient(AsyncHttpClient):
 
 
 class AsyncHttpxClient(AsyncHttpClient):
-    def __init__(self, client=None, **kwargs):
+    def __init__(self, client=None, http2=False, **kwargs):
         super().__init__(**kwargs)
         if client is None:
             import httpx  # lazy: only needed when the caller did not inject a client
-            client = httpx.AsyncClient(follow_redirects=True)  # see HttpxClient
+            options = {"follow_redirects": True}   # see HttpxClient
+            if http2:
+                options["http2"] = True
+            client = httpx.AsyncClient(**options)
         self.client = client
 
     async def _send(self, method, url, headers, body, timeout):

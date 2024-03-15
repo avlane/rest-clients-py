@@ -7,3 +7,5 @@ httpx>=0.25.0
 aiohttp>=3.8.6
 # Only needed for restclients.factories.make_oauthlib_session.
 requests-oauthlib>=1.3.1
+# Optional: HTTP/2 for the httpx clients (see docs/http2.md).
+# httpx[http2]>=0.25.0
