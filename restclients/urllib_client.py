@@ -1,4 +1,5 @@
 """HttpClient on top of urllib.request (standard library only)."""
+import http.client
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -18,6 +19,43 @@ def socket_timeout(timeout):
 def _origin(url):
     parts = urlsplit(url)
     return (parts.scheme, parts.hostname, parts.port or {"http": 80, "https": 443}.get(parts.scheme))
+
+
+class _TranslatingReader:
+    """Wrap a urllib response so errors while reading the body surface as TransportError.
+
+    Headers arrive first and the body later, so a connection can die half way through
+    (``http.client.IncompleteRead``, ``ConnectionResetError``, a read timeout). Callers
+    of a stream should see the same exception type as for a failed request.
+    """
+
+    def __init__(self, raw, url):
+        self._raw = raw
+        self._url = url
+        self._pending_error = None
+
+    def _broke(self, exc):
+        return TransportError("stream from %s broke off: %s" % (self._url, exc or type(exc).__name__),
+                              url=self._url)
+
+    def read(self, size=-1):
+        if self._pending_error is not None:
+            error, self._pending_error = self._pending_error, None
+            raise error from None
+        try:
+            return self._raw.read(size)
+        except http.client.IncompleteRead as exc:
+            # hand over what did arrive first; the failure is raised by the next read()
+            error = self._broke(exc)
+            if exc.partial:
+                self._pending_error = error
+                return exc.partial
+            raise error from None
+        except (http.client.HTTPException, OSError) as exc:
+            raise self._broke(exc) from None
+
+    def close(self):
+        self._raw.close()
 
 
 class RedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -90,9 +128,10 @@ class UrllibClient(HttpClient):
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
             resp = self._opener.open(req, timeout=socket_timeout(timeout))
-            return StreamResponse(resp.status, list(resp.headers.items()), resp, resp.geturl())
+            return StreamResponse(resp.status, list(resp.headers.items()),
+                                  _TranslatingReader(resp, resp.geturl()), resp.geturl())
         except urllib.error.HTTPError as exc:
-            return StreamResponse(exc.code, list(exc.headers.items()), exc, url)
+            return StreamResponse(exc.code, list(exc.headers.items()), _TranslatingReader(exc, url), url)
         except urllib.error.URLError as exc:
             raise TransportError("cannot reach %s: %s" % (url, exc.reason), url=url) from None
         except OSError as exc:

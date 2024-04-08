@@ -508,6 +508,43 @@ class Handler(BaseHTTPRequestHandler):
             store.complete(key, (200, result))
         self.send_json(result)
 
+    def _chunked(self, pieces, content_type, delay=0.0, terminate=True):
+        """Send ``pieces`` (bytes) with Transfer-Encoding: chunked, flushing after each."""
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        for piece in pieces:
+            self.wfile.write(b"%x\r\n" % len(piece) + piece + b"\r\n")
+            self.wfile.flush()
+            if delay:
+                time.sleep(delay)
+        if terminate:
+            self.wfile.write(b"0\r\n\r\n")
+
+    def h_ndjson(self):
+        """/ndjson?count=N: one JSON object per line, streamed in chunks.
+
+        ``bad=K`` makes line K invalid JSON, ``blank=1`` adds blank lines, ``crlf=1`` uses CRLF,
+        ``split=1`` sends every byte as its own chunk, ``fail_after=K`` hangs up after K lines.
+        """
+        count = int(self.q("count", 5))
+        eol = b"\r\n" if self.q("crlf") else b"\n"
+        lines = []
+        for n in range(1, count + 1):
+            text = b"{oops" if self.q("bad") == str(n) else json.dumps({"n": n, "name": "row-%d" % n}).encode()
+            lines.append(text + eol)
+            if self.q("blank"):
+                lines.append(eol)
+        if self.q("fail_after"):
+            lines = lines[:int(self.q("fail_after"))]
+        body = b"".join(lines)
+        pieces = [body[i:i + 1] for i in range(len(body))] if self.q("split") else lines
+        cut = bool(self.q("fail_after"))
+        self._chunked(pieces, "application/x-ndjson", float(self.q("delay", 0)), terminate=not cut)
+        if cut:
+            self.close_connection = True       # no terminating chunk: the client sees a truncated body
+
     # ROUTES-END
 
 
