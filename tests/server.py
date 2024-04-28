@@ -545,6 +545,28 @@ class Handler(BaseHTTPRequestHandler):
         if cut:
             self.close_connection = True       # no terminating chunk: the client sees a truncated body
 
+    def h_events(self):
+        """/events?count=N: a text/event-stream with ids 1..N.
+
+        Honours Last-Event-ID. ``drop_after=K`` breaks the connection after K events of a
+        stream that did not send Last-Event-ID (i.e. the first connection).
+        """
+        count = int(self.q("count", 5))
+        start = int(self.headers.get("Last-Event-ID") or 0) + 1
+        drop_after = int(self.q("drop_after", 0))
+        pieces = [b": connected\n\n", b"retry: 20\n\n"]
+        for n in range(start, count + 1):
+            pieces.append(("id: %d\nevent: tick\ndata: {\"n\": %d}\n\n" % (n, n)).encode())
+            if n == 3:
+                pieces.append(b"data: line one\ndata: line two\n\n")      # multi-line, no id of its own
+        resumed = "Last-Event-ID" in self.headers
+        cut = drop_after and not resumed
+        if cut:
+            pieces = pieces[:2 + drop_after]
+        self._chunked(pieces, "text/event-stream", terminate=not cut)
+        if cut:
+            self.close_connection = True
+
     # ROUTES-END
 
 
