@@ -7,6 +7,7 @@ urllib code paths are exercised over real sockets. Routes are methods named
 import base64
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -621,10 +622,21 @@ class ApiServer:
         return self.httpd.requests
 
     def __enter__(self):
+        # Keep tests independent of a developer's proxy settings: loopback is never proxied.
+        self._saved_no_proxy = {k: os.environ.get(k) for k in ("NO_PROXY", "no_proxy")}
+        extra = "127.0.0.1,localhost"
+        for key in ("NO_PROXY", "no_proxy"):
+            current = os.environ.get(key)
+            os.environ[key] = extra if not current else current + "," + extra
         self.thread.start()
         return self
 
     def __exit__(self, *exc):
+        for key, value in self._saved_no_proxy.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=5)

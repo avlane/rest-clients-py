@@ -100,11 +100,23 @@ class _NoRedirects(urllib.request.HTTPRedirectHandler):
 
 
 class UrllibClient(HttpClient):
-    def __init__(self, follow_redirects=True, **kwargs):
+    """HttpClient on urllib.request.
+
+    ``proxies`` is an explicit ``{"http": url, "https": url}`` mapping. Without it the usual
+    environment variables (``HTTP_PROXY``, ``HTTPS_PROXY``, ``NO_PROXY`` and lowercase
+    forms) are honoured, unless ``trust_env=False``, which means "connect directly".
+    """
+
+    def __init__(self, follow_redirects=True, proxies=None, trust_env=True, **kwargs):
         super().__init__(**kwargs)
         self.follow_redirects = follow_redirects
-        self._opener = urllib.request.build_opener(
-            RedirectHandler() if follow_redirects else _NoRedirects())
+        handlers = [RedirectHandler() if follow_redirects else _NoRedirects()]
+        if proxies is not None:
+            handlers.append(urllib.request.ProxyHandler(dict(proxies)))
+        elif not trust_env:
+            handlers.append(urllib.request.ProxyHandler({}))
+        # otherwise build_opener adds its default ProxyHandler, which reads the environment
+        self._opener = urllib.request.build_opener(*handlers)
 
     def _send(self, method, url, headers, body, timeout):
         timeout = socket_timeout(timeout)

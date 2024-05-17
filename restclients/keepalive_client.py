@@ -10,6 +10,7 @@ import http.client
 import socket
 import threading
 import time
+import urllib.request
 from urllib.parse import urlsplit
 
 from restclients.client import HttpClient
@@ -73,8 +74,17 @@ class ConnectionPool:
 
 
 class KeepAliveClient(HttpClient):
-    def __init__(self, max_connections=10, pool_timeout=30.0, **kwargs):
+    """Pooled keep-alive client. It cannot use proxies.
+
+    http.client has no proxy support of its own. Rather than quietly connecting
+    directly and bypassing a proxy the environment asks for, a request that the
+    environment says must go through a proxy raises ``TransportError`` (unless
+    ``trust_env=False``). Use :class:`UrllibClient` there.
+    """
+
+    def __init__(self, max_connections=10, pool_timeout=30.0, trust_env=True, **kwargs):
         super().__init__(**kwargs)
+        self.trust_env = trust_env
         self.max_connections = max_connections
         self.pool_timeout = pool_timeout
         self._pools = {}                # (scheme, netloc) -> ConnectionPool
@@ -96,6 +106,10 @@ class KeepAliveClient(HttpClient):
 
     def _send(self, method, url, headers, body, timeout):
         parts = urlsplit(url)
+        if self.trust_env and self._needs_proxy(parts):
+            raise TransportError("the environment configures a proxy for %s, which KeepAliveClient "
+                                 "cannot use; use UrllibClient or set trust_env=False" % parts.netloc,
+                                 url=url)
         pool = self._pool_for(parts.scheme, parts.netloc)
         target = parts.path or "/"
         if parts.query:
@@ -129,6 +143,11 @@ class KeepAliveClient(HttpClient):
                                      url=url) from None
             finally:
                 pool.release(conn, reusable)
+
+    @staticmethod
+    def _needs_proxy(parts):
+        proxy = urllib.request.getproxies().get(parts.scheme)
+        return bool(proxy) and not urllib.request.proxy_bypass(parts.netloc)
 
     def close(self):
         with self._lock:
