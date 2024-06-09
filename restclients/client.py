@@ -10,7 +10,7 @@ import time
 import uuid
 from urllib.parse import urlencode
 
-from restclients.errors import TransportError, error_for_status
+from restclients.errors import DeadlineExceeded, TransportError, error_for_status
 from restclients.logging_utils import correlation_id, redact_url
 from restclients.multipart import FilePart, encode_multipart
 from restclients.response import Response
@@ -25,6 +25,13 @@ def _as_file_parts(files):
     """Accept ``{"field": FilePart}`` or ``{"field": (filename, bytes[, content_type])}``."""
     pairs = files.items() if hasattr(files, "items") else files
     return [(name, part if isinstance(part, FilePart) else FilePart(*part)) for name, part in pairs]
+
+
+def _clamp_timeout(timeout, remaining):
+    """No attempt may run longer than the time left (works for numbers and (connect, read) pairs)."""
+    if isinstance(timeout, (tuple, list)):
+        return tuple(remaining if t is None else min(t, remaining) for t in timeout)
+    return remaining if timeout is None else min(timeout, remaining)
 
 
 class PreparedRequest:
@@ -85,8 +92,10 @@ class HttpClient(RequestBuilder):
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
                  sleep=time.sleep, rate_limiter=None, cache=None, logger=None, request_id_header="X-Request-ID", idempotency_header=None,
-                 breaker=None):
+                 breaker=None, deadline=None, clock=time.monotonic):
         super().__init__(base_url, headers, timeout, auth)
+        self.deadline = deadline
+        self._clock = clock
         self.logger = logger or log
         self.request_id_header = request_id_header
         self.idempotency_header = idempotency_header
@@ -107,7 +116,8 @@ class HttpClient(RequestBuilder):
 
     # -- public API -------------------------------------------------------
     def request(self, method, path, params=None, headers=None, json=None, data=None,
-                timeout=None, raise_for_status=True, auth=None, form=None, files=None):
+                timeout=None, raise_for_status=True, auth=None, form=None, files=None,
+                deadline=None):
         """Send a request and return a :class:`Response`.
 
         ``json`` is encoded as the body (with a Content-Type); ``form`` is sent
@@ -122,19 +132,21 @@ class HttpClient(RequestBuilder):
         method, url, send_headers = prepared.method, prepared.url, prepared.headers
         request_id = self._request_id(send_headers)
         keyed = self._idempotency_key(method, send_headers)
+        budget = self.deadline if deadline is None else deadline
+        expires = None if budget is None else self._clock() + budget
         body, timeout, auth = prepared.body, prepared.timeout, prepared.auth
         cache_key = url if method == "GET" and self.cache is not None else None
         if cache_key is not None:
             for name, value in self.cache.conditional_headers(cache_key).items():
                 send_headers.setdefault(name, value)
         response = self._send_with_retries(method, url, send_headers, body, timeout, request_id,
-                                           keyed)
+                                           keyed, expires)
         if response.status == 401 and hasattr(auth, "invalidate"):
             # The token may have been revoked or expired early: get a fresh one and try once more.
             auth.invalidate()
             auth.apply(send_headers)
             response = self._send_with_retries(method, url, send_headers, body, timeout,
-                                               request_id, keyed)
+                                               request_id, keyed, expires)
         if cache_key is not None:
             if response.status == 304 and cache_key in self.cache:
                 response = self.cache.revalidated(cache_key, response)
@@ -224,8 +236,15 @@ class HttpClient(RequestBuilder):
         self.logger.log(level, "%s %s -> %s", method, safe_url, status if status else "failed",
                         extra=info)
 
+    def _sleep_within(self, expires, wait, method, url):
+        """Sleep ``wait`` seconds, or fail now if the deadline would pass while asleep."""
+        if expires is not None and self._clock() + wait >= expires:
+            raise DeadlineExceeded("deadline would pass while waiting %.1fs to retry %s %s"
+                                   % (wait, method, redact_url(url)), url=url)
+        self._sleep(wait)
+
     def _send_with_retries(self, method, url, headers, body, timeout, request_id=None,
-                           keyed=False):
+                           keyed=False, expires=None):
         policy = self.retry
         attempt = 0
         while True:
@@ -233,13 +252,20 @@ class HttpClient(RequestBuilder):
             # a request carrying an idempotency key is safe to repeat whatever its method
             retryable = (policy is not None and (keyed or policy.should_retry_method(method))
                          and policy.attempts_left(attempt))
+            attempt_timeout = timeout
+            if expires is not None:
+                remaining = expires - self._clock()
+                if remaining <= 0:
+                    raise DeadlineExceeded("deadline exceeded before attempt %d of %s %s"
+                                           % (attempt, method, redact_url(url)), url=url)
+                attempt_timeout = _clamp_timeout(timeout, remaining)
             if self.breaker is not None:
                 self.breaker.allow()         # raises CircuitOpen, which is never retried
             if self.rate_limiter is not None:
                 self.rate_limiter.acquire()  # retries count against the limit too
             started = time.perf_counter()
             try:
-                response = self._send(method, url, headers, body, timeout)
+                response = self._send(method, url, headers, body, attempt_timeout)
             except TransportError as exc:
                 if self.breaker is not None:
                     self.breaker.record_failure()
@@ -247,7 +273,7 @@ class HttpClient(RequestBuilder):
                           started, attempt, error=exc.message, request_id=request_id)
                 if not retryable:
                     raise
-                self._sleep(policy.wait_seconds(attempt))
+                self._sleep_within(expires, policy.wait_seconds(attempt), method, url)
                 continue
             if self.breaker is not None:
                 # 5xx means the service is unhealthy; 4xx and 429 mean it is up and answering
@@ -261,7 +287,7 @@ class HttpClient(RequestBuilder):
                 retry_after = parse_retry_after(response.headers.get("Retry-After"))
                 wait = policy.wait_seconds(attempt, retry_after)
                 if wait is not None:
-                    self._sleep(wait)
+                    self._sleep_within(expires, wait, method, url)
                     continue
             return response
 

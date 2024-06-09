@@ -31,6 +31,10 @@ class TransportError(ApiError):
     """No usable response: DNS failure, refused connection, timeout."""
 
 
+class DeadlineExceeded(TransportError):
+    """The overall time budget for a call (all attempts and waits together) ran out."""
+
+
 class HttpStatusError(ApiError):
     """The server answered, but with an error status."""
 
