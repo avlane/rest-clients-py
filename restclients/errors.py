@@ -67,6 +67,14 @@ class Conflict(ClientError):
     pass
 
 
+class PreconditionFailed(ClientError):
+    """412: an ``If-Match`` / ``If-Unmodified-Since`` condition did not hold (someone else changed it)."""
+
+
+class PreconditionRequired(ClientError):
+    """428: the server insists on a conditional request (send ``If-Match``)."""
+
+
 class RateLimited(ClientError):
     """429. ``retry_after`` is the server's requested wait in seconds, if it gave one."""
 
@@ -82,6 +90,8 @@ _BY_STATUS = {
     403: Forbidden,
     404: NotFound,
     409: Conflict,
+    412: PreconditionFailed,
+    428: PreconditionRequired,
     429: RateLimited,
 }
 

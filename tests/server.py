@@ -104,17 +104,28 @@ class Handler(BaseHTTPRequestHandler):
             item = None
         if item is None:
             return self.send_json({"error": "not found"}, 404)
+        key = item["id"]
+        etag = lambda: '"item-%d-v%d"' % (key, self.server.item_versions.get(key, 1))
+        if self.command in ("PUT", "PATCH", "DELETE"):
+            wanted = self.headers.get("If-Match")
+            if self.q("require_if_match") and wanted is None:
+                return self.send_json({"error": "send If-Match"}, 428)
+            if wanted is not None and wanted != "*" and wanted != etag():
+                return self.send_json({"error": "item changed since you read it"}, 412,
+                                      {"ETag": etag()})
         if self.command in ("PUT", "PATCH"):
             data = self._json_body()
             if not isinstance(data, dict):
                 return self.send_json({"error": "invalid JSON"}, 400)
             item.update({k: v for k, v in data.items() if k in ("name", "price")})
+            self.server.item_versions[key] = self.server.item_versions.get(key, 1) + 1
         elif self.command == "DELETE":
             self.server.items.remove(item)
             self.send_response(204)
+            self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        self.send_json(item)
+        self.send_json(item, headers={"ETag": etag()})
 
     def h_echo(self):
         self.send_json({
@@ -578,6 +589,7 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.item_versions = {}
         self.httpd.bulk_records = []
         self.httpd.payments = []
         self.httpd.idempotency = IdempotencyStore()
