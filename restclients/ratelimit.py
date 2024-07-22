@@ -52,3 +52,53 @@ class TokenBucket:
         if wait > 0:
             self._sleep(wait)
         return wait
+
+
+class RateLimitInfo:
+    """What the server says about its own rate limit.
+
+    Understands the IETF draft names (``RateLimit-Limit``, ``RateLimit-Remaining`` and
+    ``RateLimit-Reset``, the last a number of seconds) and the common ``X-RateLimit-*`` forms,
+    where ``X-RateLimit-Reset`` is usually a Unix timestamp (GitHub) but sometimes seconds.
+    """
+
+    def __init__(self, limit, remaining, reset_at):
+        self.limit = limit
+        self.remaining = remaining
+        self.reset_at = reset_at          # Unix timestamp when the window renews, or None
+
+    @classmethod
+    def from_headers(cls, headers, now=None):
+        """Parse a ``Headers`` (or mapping); returns None if the response says nothing useful."""
+        now = time.time() if now is None else now
+
+        def number(*names):
+            for name in names:
+                value = headers.get(name) if hasattr(headers, "get") else None
+                if value is None:
+                    continue
+                try:
+                    return float(str(value).strip().split(",")[0].split(";")[0])
+                except ValueError:
+                    continue
+            return None
+
+        limit = number("RateLimit-Limit", "X-RateLimit-Limit")
+        remaining = number("RateLimit-Remaining", "X-RateLimit-Remaining")
+        if remaining is None:
+            return None
+        reset = number("RateLimit-Reset", "X-RateLimit-Reset", "X-Rate-Limit-Reset")
+        reset_at = None
+        if reset is not None:
+            reset_at = reset if reset > 1e9 else now + reset      # a timestamp, or seconds from now
+        return cls(None if limit is None else int(limit), int(remaining), reset_at)
+
+    def wait_needed(self, now=None):
+        """Seconds until the window renews if no requests remain, else 0."""
+        now = time.time() if now is None else now
+        if self.remaining > 0 or self.reset_at is None:
+            return 0.0
+        return max(0.0, self.reset_at - now)
+
+    def __repr__(self):
+        return "RateLimitInfo(limit=%r, remaining=%r, reset_at=%r)" % (self.limit, self.remaining, self.reset_at)

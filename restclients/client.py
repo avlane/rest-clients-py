@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from restclients.errors import DeadlineExceeded, TransportError, error_for_status
 from restclients.logging_utils import correlation_id, redact_url
+from restclients.ratelimit import RateLimitInfo
 from restclients.multipart import FilePart, encode_multipart
 from restclients.response import Response
 from restclients.retry import parse_retry_after
@@ -92,8 +93,13 @@ class HttpClient(RequestBuilder):
 
     def __init__(self, base_url="", headers=None, timeout=10.0, auth=None, retry=None,
                  sleep=time.sleep, rate_limiter=None, cache=None, logger=None, request_id_header="X-Request-ID", idempotency_header=None,
-                 breaker=None, deadline=None, clock=time.monotonic):
+                 breaker=None, deadline=None, clock=time.monotonic, follow_rate_limit_headers=False,
+                 max_rate_limit_wait=30.0, wall_clock=time.time):
         super().__init__(base_url, headers, timeout, auth)
+        self.follow_rate_limit_headers = follow_rate_limit_headers
+        self.max_rate_limit_wait = max_rate_limit_wait
+        self._wall_clock = wall_clock
+        self._server_limit = None
         self.deadline = deadline
         self._clock = clock
         self.logger = logger or log
@@ -236,6 +242,21 @@ class HttpClient(RequestBuilder):
         self.logger.log(level, "%s %s -> %s", method, safe_url, status if status else "failed",
                         extra=info)
 
+    def _wait_for_server_limit(self, expires, method, url):
+        """Pause until the server's window renews if its last response said nothing is left.
+
+        Cheaper than sending a request that is certain to get a 429, and it keeps us from being
+        throttled harder. Waits longer than ``max_rate_limit_wait`` are not taken: we go ahead
+        and let the server decide (the retry policy deals with a resulting 429).
+        """
+        info = self._server_limit
+        if not self.follow_rate_limit_headers or info is None:
+            return
+        wait = info.wait_needed(self._wall_clock())
+        if 0 < wait <= self.max_rate_limit_wait:
+            self._sleep_within(expires, wait, method, url)
+            self._server_limit = None        # the window has renewed; wait for fresh numbers
+
     def _sleep_within(self, expires, wait, method, url):
         """Sleep ``wait`` seconds, or fail now if the deadline would pass while asleep."""
         if expires is not None and self._clock() + wait >= expires:
@@ -259,6 +280,7 @@ class HttpClient(RequestBuilder):
                     raise DeadlineExceeded("deadline exceeded before attempt %d of %s %s"
                                            % (attempt, method, redact_url(url)), url=url)
                 attempt_timeout = _clamp_timeout(timeout, remaining)
+            self._wait_for_server_limit(expires, method, url)
             if self.breaker is not None:
                 self.breaker.allow()         # raises CircuitOpen, which is never retried
             if self.rate_limiter is not None:
@@ -275,6 +297,8 @@ class HttpClient(RequestBuilder):
                     raise
                 self._sleep_within(expires, policy.wait_seconds(attempt), method, url)
                 continue
+            if self.follow_rate_limit_headers:
+                self._server_limit = RateLimitInfo.from_headers(response.headers, self._wall_clock())
             if self.breaker is not None:
                 # 5xx means the service is unhealthy; 4xx and 429 mean it is up and answering
                 if response.status >= 500:

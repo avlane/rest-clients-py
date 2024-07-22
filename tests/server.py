@@ -579,6 +579,36 @@ class Handler(BaseHTTPRequestHandler):
         if cut:
             self.close_connection = True
 
+    def h_metered(self):
+        """GET /metered: ``limit`` requests per ``window`` seconds (fixed window), GitHub-style headers.
+
+        Over the limit it answers 429. The window state is kept per ``key``.
+        """
+        limit = int(self.q("limit", 3))
+        window = float(self.q("window", 0.5))
+        key = "metered:" + self.q("key", "default")
+        now = time.time()
+        with self.server.lock:
+            state = self.server.meters.get(key)
+            if state is None or now >= state["reset"]:
+                state = self.server.meters[key] = {"used": 0, "reset": now + window}
+            allowed = state["used"] < limit
+            if allowed:
+                state["used"] += 1
+            else:
+                self.server.counters[key + ":429"] = self.server.counters.get(key + ":429", 0) + 1
+            remaining = limit - state["used"]
+            reset = state["reset"]
+        headers = {"X-RateLimit-Limit": str(limit), "X-RateLimit-Remaining": str(remaining),
+                   "X-RateLimit-Reset": "%.3f" % reset}
+        if self.q("ietf"):
+            headers = {"RateLimit-Limit": str(limit), "RateLimit-Remaining": str(remaining),
+                       "RateLimit-Reset": "%.3f" % max(0.0, reset - now)}
+        if not allowed:
+            headers["Retry-After"] = "%.0f" % max(1.0, reset - now) if self.q("slow_retry_after") else "0"
+            return self.send_json({"error": "rate limit exceeded"}, 429, headers)
+        self.send_json({"ok": True, "remaining": remaining}, headers=headers)
+
     # ROUTES-END
 
 
@@ -589,6 +619,7 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.meters = {}
         self.httpd.item_versions = {}
         self.httpd.bulk_records = []
         self.httpd.payments = []
