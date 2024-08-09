@@ -4,6 +4,7 @@ The bucket holds up to ``capacity`` tokens and refills at ``rate`` tokens per
 second. Each request takes one. A full bucket allows a burst; after that
 requests are spaced ``1 / rate`` seconds apart.
 """
+import asyncio
 import threading
 import time
 
@@ -51,6 +52,19 @@ class TokenBucket:
         wait = self.reserve(tokens)
         if wait > 0:
             self._sleep(wait)
+        return wait
+
+
+class AsyncTokenBucket(TokenBucket):
+    """A TokenBucket whose ``acquire`` is a coroutine and sleeps without blocking the event loop."""
+
+    def __init__(self, rate, capacity=1, clock=time.monotonic, sleep=asyncio.sleep):
+        super().__init__(rate, capacity, clock, sleep)
+
+    async def acquire(self, tokens=1):
+        wait = self.reserve(tokens)
+        if wait > 0:
+            await self._sleep(wait)
         return wait
 
 
