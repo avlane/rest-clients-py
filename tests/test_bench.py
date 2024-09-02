@@ -28,11 +28,11 @@ class RunBenchmarkTests(unittest.TestCase):
             seen = len(server.requests)
         self.assertEqual([r.name for r in results], [
             "urllib, sequential", "urllib, threads", "keep-alive pool, threads",
-            "asyncio + urllib in threads"])
+            "asyncio + urllib in threads", "asyncio native streams"])
         for r in results:
             self.assertEqual((r.requests, r.errors), (24, 0))
             self.assertEqual(len(r.latencies), 24)
-        self.assertEqual(seen, 5 + 4 * 24)               # warm-up plus every scenario
+        self.assertEqual(seen, 5 + 5 * 24)               # warm-up plus every scenario
 
     def test_overlapping_waits_beats_doing_them_one_at_a_time(self):
         with ApiServer() as server:
@@ -40,7 +40,8 @@ class RunBenchmarkTests(unittest.TestCase):
                 server.url, requests=16, concurrency=8, delay=0.05, warmup=1)}
         sequential = results["urllib, sequential"].seconds
         self.assertGreater(sequential, 16 * 0.05)         # at least the sum of the delays
-        for name in ("urllib, threads", "keep-alive pool, threads", "asyncio + urllib in threads"):
+        for name in ("urllib, threads", "keep-alive pool, threads", "asyncio + urllib in threads",
+                     "asyncio native streams"):
             self.assertLess(results[name].seconds, sequential / 2, name)
 
     def test_keepalive_opens_few_connections(self):
@@ -63,7 +64,7 @@ class RunBenchmarkTests(unittest.TestCase):
     def test_unknown_scenario(self):
         with self.assertRaisesRegex(ValueError, "nope"):
             run_benchmark("http://127.0.0.1:9", scenarios=["nope"])
-        self.assertEqual(sorted(SCENARIOS), ["asyncio", "keepalive", "sequential", "threads"])
+        self.assertEqual(sorted(SCENARIOS), ["asyncio", "asyncio-native", "keepalive", "sequential", "threads"])
 
 
 class ReportTests(unittest.TestCase):

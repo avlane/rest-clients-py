@@ -5,8 +5,8 @@ Everything runs against a server you point it at. With an artificial
 overlaps waiting; with ``delay=0`` it measures per-request overhead instead.
 
 Only transports that can run without third-party packages are included
-(``urllib``, the pooled ``http.client`` client, and asyncio driving urllib in
-threads).
+(``urllib``, the pooled ``http.client`` client, asyncio driving urllib in
+threads, and the native asyncio streams client).
 """
 import asyncio
 import statistics
@@ -14,6 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from restclients.async_client import ThreadedAsyncClient
+from restclients.async_streams_client import AsyncStreamsClient
 from restclients.concurrency import map_bounded
 from restclients.keepalive_client import KeepAliveClient
 from restclients.urllib_client import UrllibClient
@@ -115,11 +116,31 @@ def run_asyncio_threaded(base_url, path, params, requests, concurrency):
         executor.shutdown(wait=True)
 
 
+def run_asyncio_native(base_url, path, params, requests, concurrency):
+    client = AsyncStreamsClient(base_url=base_url)
+
+    async def one(_):
+        started = time.perf_counter()
+        try:
+            await client.get(path, params=params)
+            return time.perf_counter() - started, None
+        except Exception as exc:
+            return time.perf_counter() - started, exc
+
+    async def main():
+        return await map_bounded(one, range(requests), limit=concurrency)
+
+    started = time.perf_counter()
+    outcomes = asyncio.run(main())
+    return _collect("asyncio native streams", requests, concurrency, time.perf_counter() - started, outcomes)
+
+
 SCENARIOS = {
     "sequential": run_urllib_sequential,
     "threads": run_urllib_threads,
     "keepalive": run_keepalive_threads,
     "asyncio": run_asyncio_threaded,
+    "asyncio-native": run_asyncio_native,
 }
 
 
