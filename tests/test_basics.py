@@ -1,7 +1,21 @@
 import unittest
+import warnings
 
 from restclients import basics
 from tests.server import ApiServer
+
+
+_saved_filters = []
+
+
+def setUpModule():
+    # basics.get_json is deprecated; these tests are about its behaviour, not the warning
+    _saved_filters[:] = warnings.filters
+    warnings.filterwarnings("ignore", message=r"restclients\.basics\.get_json", category=DeprecationWarning)
+
+
+def tearDownModule():
+    warnings.filters[:] = _saved_filters
 
 
 class GetJsonTests(unittest.TestCase):
@@ -31,6 +45,21 @@ class GetJsonTests(unittest.TestCase):
         self.assertEqual(echo["headers"]["x-trace"], "abc")
         self.assertEqual(echo["headers"]["accept"], "application/json")
         self.assertTrue(echo["headers"]["user-agent"].startswith("rest-clients-py/"))
+
+
+class DeprecationTests(unittest.TestCase):
+    def test_get_json_warns_and_still_works(self):
+        with ApiServer() as server:
+            with self.assertWarnsRegex(DeprecationWarning, "learning example") as caught:
+                item = basics.get_json(server.url + "/items/1")
+        self.assertEqual(item["id"], 1)
+        self.assertTrue(caught.filename.endswith("test_basics.py"))      # attributed to the caller
+
+    def test_the_replacement_does_not_warn(self):
+        from restclients.urllib_client import UrllibClient
+        with ApiServer() as server, warnings.catch_warnings():
+            warnings.simplefilter("error")
+            UrllibClient(base_url=server.url).get_json("/items/1")
 
 
 class BuildUrlTests(unittest.TestCase):

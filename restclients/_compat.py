@@ -15,4 +15,20 @@ except ImportError:                          # pragma: no cover - exercised on o
                 return
             yield chunk
 
-__all__ = ["batched"]
+try:
+    from warnings import deprecated         # Python 3.13+
+except ImportError:                          # pragma: no cover - exercised on older interpreters only
+    import functools
+    import warnings
+
+    def deprecated(message, *, category=DeprecationWarning, stacklevel=1):
+        """Decorator marking a function deprecated; calling it warns (like warnings.deprecated)."""
+        def decorate(func):
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                warnings.warn(message, category, stacklevel=stacklevel + 1)
+                return func(*args, **kwargs)
+            return wrapper
+        return decorate
+
+__all__ = ["batched", "deprecated"]

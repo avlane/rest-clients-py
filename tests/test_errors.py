@@ -1,7 +1,21 @@
 import unittest
+import warnings
 
 from restclients import basics, errors
 from tests.server import ApiServer
+
+
+_saved_filters = []
+
+
+def setUpModule():
+    # basics.get_json is deprecated; these tests are about its behaviour, not the warning
+    _saved_filters[:] = warnings.filters
+    warnings.filterwarnings("ignore", message=r"restclients\.basics\.get_json", category=DeprecationWarning)
+
+
+def tearDownModule():
+    warnings.filters[:] = _saved_filters
 
 
 class ErrorMappingTests(unittest.TestCase):
