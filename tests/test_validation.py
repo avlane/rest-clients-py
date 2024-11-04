@@ -1,3 +1,4 @@
+import sys
 import unittest
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
@@ -84,6 +85,32 @@ class ParseTests(unittest.TestCase):
             parse_list(Item, [{} for _ in range(5)])
         self.assertEqual(len(ctx.exception.problems), 10)
         self.assertIn("and 5 more", ctx.exception.message)
+
+    def test_builtin_generics(self):
+        @dataclass
+        class Inventory:
+            counts: dict[str, int]
+            tags: list[str] = field(default_factory=list)
+
+        inventory = parse(Inventory, {"counts": {"a": 1}, "tags": ["x"]})
+        self.assertEqual((inventory.counts, inventory.tags), ({"a": 1}, ["x"]))
+        self.assertEqual(problems_for(Inventory, {"counts": {"a": "1"}, "tags": [3]}),
+                         [("$.counts.a", "expected an integer, got str"),
+                          ("$.tags[0]", "expected a string, got int")])
+
+    @unittest.skipIf(sys.version_info < (3, 10), "X | Y unions need Python 3.10+")
+    def test_pep_604_unions(self):
+        @dataclass
+        class Reading:
+            value: int | None = None
+            label: int | str = 0
+
+        self.assertIsNone(parse(Reading, {"value": None}).value)
+        self.assertEqual(parse(Reading, {"value": 3, "label": "x"}).label, "x")
+        self.assertEqual(problems_for(Reading, {"value": "3"}),
+                         [("$.value", "expected an integer, got str")])
+        self.assertEqual(problems_for(Reading, {"label": 1.5}),
+                         [("$.label", "float matches none of the allowed types")])
 
     def test_unsupported_annotation_is_a_programming_error(self):
         @dataclass

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterator
-from typing import Any, Dict
+from typing import Any
 
 from restclients import pagination
 from restclients.client import HttpClient
 from restclients.validation import parse, parse_list
 
-JsonObject = Dict[str, Any]  # a runtime alias, so it stays typing.Dict until 3.9 is the floor
+JsonObject = dict[str, Any]
 
 
 class ApiClient:

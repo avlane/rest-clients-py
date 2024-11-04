@@ -5,7 +5,7 @@ reader (and the editor) what the API returns. Decoding and type checking is
 done by :mod:`restclients.validation`, driven by the annotations below.
 """
 from dataclasses import asdict, dataclass, field
-from typing import List, Optional
+from typing import Optional
 
 from restclients.validation import parse
 
@@ -32,7 +32,7 @@ class Item(Model):
 class Order(Model):
     id: int
     customer: str
-    items: List[Item] = field(default_factory=list)
+    items: list[Item] = field(default_factory=list)
     note: Optional[str] = None
 
     @property

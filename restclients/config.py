@@ -23,7 +23,7 @@ Unknown keys are errors, so a typo does not silently disable retries.
 """
 import os
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 from restclients.auth import ApiKeyAuth, BasicAuth, BearerAuth
 from restclients.errors import ApiError
@@ -49,9 +49,9 @@ class ConfigError(ApiError):
 @dataclass
 class ClientSection:
     base_url: str
-    timeout: Union[float, List[float]] = 10.0
+    timeout: Union[float, list[float]] = 10.0
     transport: str = "urllib"
-    headers: Dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
