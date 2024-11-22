@@ -24,9 +24,22 @@ class EncodeTests(unittest.TestCase):
         self.assertEqual(FilePart("data.json", b"{}").content_type, "application/json")
         self.assertEqual(FilePart("blob.unknownext", b"").content_type, "application/octet-stream")
 
-    def test_quotes_and_newlines_in_names_are_escaped(self):
+    def test_quotes_and_newlines_in_names_are_percent_encoded_as_browsers_do(self):
         body, _ = encode_multipart({}, {"f": FilePart('we"ird\r\n.txt', b"")}, boundary="B")
-        self.assertIn(b'filename="we\\"ird%0D%0A.txt"', body)
+        self.assertIn(b'filename="we%22ird%0D%0A.txt"', body)
+
+    def test_backslash_is_not_an_escape_character(self):
+        body, _ = encode_multipart({}, {"f": FilePart("dir\\file.txt", b"")}, boundary="B")
+        self.assertIn(b'filename="dir\\file.txt"', body)
+
+    def test_non_ascii_filename_is_raw_utf8_and_there_is_no_filename_star(self):
+        body, _ = encode_multipart({}, {"f": FilePart("na\u00efve-\u6587\u4ef6.txt", b"x")}, boundary="B")
+        self.assertIn('filename="na\u00efve-\u6587\u4ef6.txt"'.encode("utf-8"), body)
+        self.assertNotIn(b"filename*", body)
+
+    def test_bare_newlines_in_text_values_become_crlf(self):
+        body, _ = encode_multipart({"note": "a\nb\rc\r\nd"}, boundary="B")
+        self.assertIn(b"a\r\nb\r\nc\r\nd", body)
 
 
 class UploadToServerTests(unittest.TestCase):
@@ -55,6 +68,14 @@ class UploadToServerTests(unittest.TestCase):
         self.assertEqual(by_name["upload"]["content_type"], "application/x-custom")
         self.assertEqual(by_name["upload"]["size"], len(content))
         self.assertEqual(by_name["upload"]["sha256"], hashlib.sha256(content).hexdigest())
+
+    def test_non_ascii_filename_round_trips_through_an_independent_parser(self):
+        parts = self.upload(None, {"f": FilePart("na\u00efve-\u6587\u4ef6.txt", b"data")})
+        self.assertEqual(parts[0]["filename"], "na\u00efve-\u6587\u4ef6.txt")
+
+    def test_quote_in_a_filename_arrives_percent_encoded_like_a_browser_upload(self):
+        parts = self.upload(None, {"f": FilePart('say "hi".txt', b"data")})
+        self.assertEqual(parts[0]["filename"], "say %22hi%22.txt")
 
     def test_multiple_files_with_same_field_name(self):
         parts = self.upload(None, [("f", FilePart("a.txt", b"A")), ("f", FilePart("b.txt", b"BB"))])
