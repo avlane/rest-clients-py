@@ -57,3 +57,36 @@ Sequential urllib even has the best single-request latency (0.7 ms p50).
    matters, measure it rather than looking at throughput alone.
 
 Re-run on your own machine and API before deciding anything.
+
+## Addendum: the native asyncio client (December)
+
+`AsyncStreamsClient` (asyncio streams, one connection per request, one thread)
+was added to the harness after the tables above were produced. This second run
+was taken while the machine was busy with other work, and the same scenarios came
+out several times slower than in the first run (sequential urllib, 500 requests,
+no delay: 0.39 s then, 1.50 s now). Compare rows *within* a table only.
+
+200 requests, 20 ms server delay, concurrency 16:
+
+| scenario | seconds | req/s | p50 ms | p95 ms |
+|---|---:|---:|---:|---:|
+| keep-alive pool, threads | 0.33 | 607 | 25.2 | 28.0 |
+| urllib, threads | 0.35 | 565 | 26.2 | 29.2 |
+| asyncio + urllib in threads | 0.45 | 444 | 27.7 | 59.4 |
+| asyncio native streams | 0.50 | 401 | 33.5 | 68.7 |
+| urllib, sequential (concurrency 1) | 5.10 | 39 | 25.8 | 29.5 |
+
+500 requests, no delay, concurrency 8:
+
+| scenario | seconds | req/s | p50 ms | p95 ms |
+|---|---:|---:|---:|---:|
+| keep-alive pool, threads | 0.29 | 1737 | 3.1 | 10.7 |
+| urllib, threads | 0.89 | 564 | 8.5 | 45.4 |
+| asyncio + urllib in threads | 0.90 | 557 | 8.6 | 41.7 |
+| asyncio native streams | 1.00 | 501 | 10.2 | 46.0 |
+| urllib, sequential | 1.50 | 334 | 2.2 | 8.1 |
+
+The hand-written asyncio client lands with the other connection-per-request
+strategies: it overlaps the waiting as well as threads do, with no thread pool,
+but it does not make the per-request work cheaper. The one thing that stands out
+in both tables is again connection reuse.

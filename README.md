@@ -15,7 +15,7 @@ client takes an injected session, and the tests use fakes for them. So:
 |---|---|
 | `urllib.request` (`UrllibClient`, `basics`) | **for real**, over sockets, against a local `ThreadingHTTPServer` |
 | `http.client` (`KeepAliveClient`) | **for real**: connection reuse, pool limits, stale-connection recovery (the server counts TCP connections) |
-| `asyncio` (`ThreadedAsyncClient`, `gather_bounded`) | **for real**: the urllib client driven from an event loop against the local server |
+| `asyncio` (`ThreadedAsyncClient`, `AsyncStreamsClient`, `gather_bounded`) | **for real**: the urllib client driven from an event loop, and a native asyncio client on `asyncio.open_connection`, both against the local server. The async retry/limiter/breaker logic is exercised through the native client; the httpx and aiohttp async wrappers around the same logic are tested with fakes |
 | everything transport independent (retries, rate limiting, caching, pagination, auth, OAuth2, PKCE, streaming, uploads, recorder, config, circuit breaker, idempotency keys, bulk batching) | **for real**, through the urllib client and the local server |
 | webhook receiver, sender and HMAC verification | **for real**, over localhost sockets |
 | OpenAPI reader and client generator | **for real**: the generated code is executed against the local server, using a hand-written spec that describes that server |
@@ -39,13 +39,17 @@ Run the tests with `python3 -m unittest discover`. To see signed webhooks workin
   status checks, retries, rate limiting, ETag caching, auth, request IDs and logging
 - `restclients/urllib_client.py`, `keepalive_client.py`, `requests_client.py`, `httpx_client.py`
   the synchronous transports
-- `restclients/async_client.py`, `aiohttp_client.py`, `concurrency.py` the async transports and bounded gather
+- `restclients/async_client.py`, `aiohttp_client.py`, `async_streams_client.py`, `concurrency.py` the async
+  transports (the last of the clients is a native asyncio HTTP/1.1 client on stdlib streams) and bounded gather
 - `restclients/errors.py` one exception class per kind of failure
 - `restclients/pagination.py` page/limit, `Link` header and cursor iterators
 - `restclients/retry.py`, `ratelimit.py`, `etag_cache.py`
 - `restclients/auth.py`, `oauth2.py`, `pkce.py`, `loopback.py` Basic/Bearer/API key, client credentials,
   authorization code with PKCE and a loopback redirect listener
-- `restclients/streaming.py`, `multipart.py`, `uploads.py` downloads (with resume) and uploads
+- `restclients/streaming.py`, `sse.py`, `multipart.py`, `uploads.py` downloads (with resume), NDJSON and
+  Server-Sent Events streams, uploads
+- `restclients/optimistic.py` `If-Match` updates with conflict retries
+- `restclients/bench.py` benchmark harness (`python3 -m restclients.bench`)
 - `restclients/models.py`, `validation.py` dataclass models and payload validation
 - `restclients/base.py` `ApiClient`, the base class for per-API clients (see `examples/items_client.py`)
 - `restclients/logging_utils.py` JSON log formatter and secret redaction
@@ -94,6 +98,19 @@ is answered from the stored body. It does not do freshness lifetimes.
 **Redirects.** `UrllibClient` follows redirects with an explicit policy:
 307/308 keep the method and body, 301/302/303 turn POST into GET, and
 `Authorization`/`Cookie` are dropped when the host changes.
+
+**Streams.** NDJSON and SSE streams are read incrementally; a connection that breaks mid-body
+raises `TransportError` after the bytes that did arrive have been delivered, and
+`follow_sse` reconnects with `Last-Event-ID`.
+
+**Deadlines and server limits.** `deadline=` bounds a whole call including retries;
+`follow_rate_limit_headers=True` waits for a window the server reports as used up.
+
+**Proxies.** `UrllibClient` honours `HTTP_PROXY`/`NO_PROXY` (or `proxies=`). `KeepAliveClient` cannot use a
+proxy and refuses a destination the environment says must be proxied rather than bypass it.
+
+**httpx 0.28** (late November 2024) removed the `proxies=` argument in favour of `proxy=` and `mounts=`.
+Nothing here passes `proxies=`, and the factories forward extra options unchanged.
 
 **Secrets.** Logs and cassettes redact `Authorization`, cookies, API keys and
 secret-looking query parameters and JSON keys. Config files name environment
