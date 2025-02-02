@@ -6,6 +6,11 @@ callers can stop early without fetching every page.
 
 import re
 
+from restclients.errors import PaginationLoop
+
+#: Pages after which a listing is assumed to be broken rather than genuinely huge.
+HARD_PAGE_LIMIT = 10000
+
 _TOKEN = re.compile(r"[^\s;,=<>\"]+")
 
 
@@ -102,6 +107,7 @@ def paginate_links(client, path, params=None, items_key=None, max_pages=None):
     """Follow ``rel="next"`` links until the server stops sending one."""
     response = client.get(path, params=params)
     fetched = 1
+    seen = {response.url}
     while True:
         body = response.json()
         items = body if items_key is None else body.get(items_key, [])
@@ -110,6 +116,11 @@ def paginate_links(client, path, params=None, items_key=None, max_pages=None):
         next_url = parse_link_header(response.headers.get("Link")).get("next")
         if not next_url or (max_pages is not None and fetched >= max_pages):
             return
+        if next_url in seen:
+            raise PaginationLoop("%s links back to a page already fetched: %s" % (path, next_url))
+        if fetched >= HARD_PAGE_LIMIT:
+            raise PaginationLoop("%s still has a next link after %d pages" % (path, fetched))
+        seen.add(next_url)
         response = client.get(next_url)  # absolute URL: params are already in it
         fetched += 1
 
@@ -125,12 +136,19 @@ def paginate_pages(client, path, params=None, limit=10, items_key="items",
     page = start_page
     seen = 0
     fetched = 0
+    previous = None
     while max_pages is None or fetched < max_pages:
         query = dict(params or {})
         query[page_param] = page
         query[limit_param] = limit
         body = client.get_json(path, params=query)
         items = body if isinstance(body, list) else body.get(items_key, [])
+        if items and items == previous:
+            raise PaginationLoop("%s returned page %d identical to page %d; the server may be "
+                                 "ignoring '%s'" % (path, page, page - 1, page_param))
+        if fetched >= HARD_PAGE_LIMIT:
+            raise PaginationLoop("%s still has pages after %d requests" % (path, fetched))
+        previous = items
         for item in items:
             yield item
         seen += len(items)
@@ -159,6 +177,7 @@ def paginate_cursor(client, path, params=None, items_key="data", next_key="meta.
     """
     cursor = None
     fetched = 0
+    seen = set()
     while max_pages is None or fetched < max_pages:
         query = dict(params or {})
         if cursor:
@@ -170,3 +189,8 @@ def paginate_cursor(client, path, params=None, items_key="data", next_key="meta.
         cursor = _dig(body, next_key)
         if not cursor:
             return
+        if cursor in seen:
+            raise PaginationLoop("%s handed out cursor %r twice" % (path, cursor))
+        if fetched >= HARD_PAGE_LIMIT:
+            raise PaginationLoop("%s still has a next cursor after %d pages" % (path, fetched))
+        seen.add(cursor)

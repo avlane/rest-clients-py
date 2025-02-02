@@ -609,6 +609,23 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "rate limit exceeded"}, 429, headers)
         self.send_json({"ok": True, "remaining": remaining}, headers=headers)
 
+    def h_broken_pages(self):
+        """Pagination bugs seen in the wild: a link to itself, a repeated cursor, a page parameter ignored."""
+        kind = self.segments[1] if len(self.segments) > 1 else ""
+        if kind == "links":
+            link = '<http://%s/broken_pages/links?page=%s>; rel="next"' % (self.headers["Host"], self.q("page", "1"))
+            return self.send_json(ITEMS[:2], headers={"Link": link})
+        if kind == "links-cycle":
+            page = int(self.q("page", 1))
+            nxt = 1 if page >= 3 else page + 1                 # 1 -> 2 -> 3 -> 1 ...
+            link = '<http://%s/broken_pages/links-cycle?page=%d>; rel="next"' % (self.headers["Host"], nxt)
+            return self.send_json(ITEMS[page:page + 2], headers={"Link": link})
+        if kind == "cursor":
+            return self.send_json({"data": ITEMS[:2], "meta": {"next_cursor": "same-every-time"}})
+        if kind == "ignores-page":
+            return self.send_json({"items": ITEMS[:3], "total": 1000})
+        self.send_json({"error": "not found"}, 404)
+
     # ROUTES-END
 
 

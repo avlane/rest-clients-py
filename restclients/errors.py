@@ -27,6 +27,10 @@ class ApiError(Exception):
         return "HTTP %s: %s" % (self.status, self.message)
 
 
+class PaginationLoop(ApiError):
+    """A paginated listing never ends: a repeated page, link or cursor, or an absurd page count."""
+
+
 class TransportError(ApiError):
     """No usable response: DNS failure, refused connection, timeout."""
 
