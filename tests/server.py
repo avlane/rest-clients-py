@@ -56,10 +56,10 @@ class Handler(BaseHTTPRequestHandler):
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = _dispatch
 
-    def send_json(self, payload, status=200, headers=None):
+    def send_json(self, payload, status=200, headers=None, content_type="application/json"):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         for key, value in (headers or {}).items():
             self.send_header(key, value)
@@ -624,6 +624,28 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"data": ITEMS[:2], "meta": {"next_cursor": "same-every-time"}})
         if kind == "ignores-page":
             return self.send_json({"items": ITEMS[:3], "total": 1000})
+        self.send_json({"error": "not found"}, 404)
+
+    def h_problem(self):
+        """RFC 9457 problem details. /problem/credit is the RFC's own example; /problem/plain-json
+        sends the same shape without the problem+json content type."""
+        kind = self.segments[1] if len(self.segments) > 1 else "credit"
+        credit = {"type": "https://example.com/probs/out-of-credit",
+                  "title": "You do not have enough credit.",
+                  "detail": "Your current balance is 30, but that costs 50.",
+                  "instance": "/account/12345/msgs/abc", "balance": 30,
+                  "accounts": ["/account/12345", "/account/67890"]}
+        if kind == "credit":
+            return self.send_json(credit, 403, content_type="application/problem+json")
+        if kind == "plain-json":
+            return self.send_json(credit, 403)
+        if kind == "minimal":
+            return self.send_json({"status": 409}, 409, content_type="application/problem+json; charset=utf-8")
+        if kind == "validation":
+            return self.send_json({"type": "https://example.com/probs/validation", "title": "Your request is not valid.",
+                                   "errors": [{"detail": "must be a positive integer", "pointer": "#/age"},
+                                              {"detail": "must be a string", "pointer": "#/profile/color"}]},
+                                  422, content_type="application/problem+json")
         self.send_json({"error": "not found"}, 404)
 
     # ROUTES-END

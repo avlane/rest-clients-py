@@ -1,6 +1,27 @@
 """Exceptions, one per kind of failure a caller might want to handle."""
 
 
+class ProblemDetails:
+    """An RFC 9457 "problem details" object (``application/problem+json``).
+
+    The standard members are attributes; any other members (the RFC calls them
+    extensions, e.g. ``balance`` or ``errors``) are in :attr:`extensions`.
+    """
+
+    STANDARD = ("type", "title", "status", "detail", "instance")
+
+    def __init__(self, data):
+        self.type = data.get("type", "about:blank")
+        self.title = data.get("title")
+        self.status = data.get("status")
+        self.detail = data.get("detail")
+        self.instance = data.get("instance")
+        self.extensions = {k: v for k, v in data.items() if k not in self.STANDARD}
+
+    def __repr__(self):
+        return "ProblemDetails(type=%r, title=%r, status=%r)" % (self.type, self.title, self.status)
+
+
 class ApiError(Exception):
     """Base class for everything this package raises."""
 
@@ -11,6 +32,21 @@ class ApiError(Exception):
         self.url = url
         self.body = body
         self.headers = headers or {}
+
+    @property
+    def problem(self):
+        """The body as :class:`ProblemDetails` if the server sent one, else None.
+
+        Recognised by the ``application/problem+json`` content type, or, for servers that
+        send it as plain JSON, by an object that has both a ``type`` and a ``title``.
+        """
+        data = self.data
+        if not isinstance(data, dict):
+            return None
+        content_type = _header(self.headers, "Content-Type") or ""
+        if "problem+json" in content_type.lower() or ("type" in data and "title" in data):
+            return ProblemDetails(data)
+        return None
 
     @property
     def data(self):
@@ -147,9 +183,13 @@ def _message_from(data):
         parts = [m for m in (_message_from(item) for item in data) if m]
         return "; ".join(parts)
     if isinstance(data, dict):
+        base = ""
         for key in ("message", "detail", "error_description", "title", "error"):
-            found = _message_from(data.get(key))
-            if found:
-                return found
-        return _message_from(data.get("errors"))
+            base = _message_from(data.get(key))
+            if base:
+                break
+        details = _message_from(data.get("errors"))
+        if base and details and details != base:
+            return "%s (%s)" % (base, details)       # e.g. a title plus the per-field problems
+        return base or details
     return ""
