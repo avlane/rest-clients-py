@@ -3,6 +3,7 @@ import tempfile
 import unittest
 
 from restclients.auth import ApiKeyAuth, BasicAuth, BearerAuth
+from restclients import config as config_module
 from restclients.config import ConfigError, build_auth, build_client, load_config, parse_config
 from restclients.keepalive_client import KeepAliveClient
 from restclients.testing import FakeSession
@@ -12,6 +13,11 @@ from tests.server import ApiServer
 FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "client.toml")
 
 
+needs_toml = unittest.skipIf(config_module.tomllib is None,
+                             "reading TOML needs Python 3.11+ or the tomli package")
+
+
+@needs_toml
 class LoadTests(unittest.TestCase):
     def test_fixture_file(self):
         config = load_config(FIXTURE)

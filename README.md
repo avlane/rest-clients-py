@@ -29,7 +29,8 @@ challenges, flaky 503s, 429s with `Retry-After`, dropped connections, ETags,
 redirects, byte ranges, multipart uploads and a small OAuth2 server (client
 credentials, authorization code with PKCE, refresh tokens).
 
-Run the tests with `python3 -m unittest discover`. To see signed webhooks working end to end:
+Run the tests with `python3 -m unittest discover`. The package declares
+3.9+ and `.github/workflows/tests.yml` runs a 3.9-3.13 matrix. To see signed webhooks working end to end:
 `python3 -m examples.webhook_demo`.
 
 ## Layout
