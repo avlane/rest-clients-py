@@ -73,7 +73,8 @@ class FakeSession:
     def request(self, method, url, headers=None, data=None, timeout=None, content=None, **kwargs):
         if data is None:
             data = content  # httpx names the raw body "content"
-        self.calls.append({"method": method, "url": url, "headers": headers,
+        # copy the headers: a client may reuse and change the same dict for its next attempt
+        self.calls.append({"method": method, "url": url, "headers": dict(headers) if headers else headers,
                            "data": data, "timeout": timeout, **kwargs})
         scripted = self.routes.get((method.upper(), url))
         if scripted:

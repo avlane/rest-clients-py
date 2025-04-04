@@ -648,6 +648,45 @@ class Handler(BaseHTTPRequestHandler):
                                   422, content_type="application/problem+json")
         self.send_json({"error": "not found"}, 404)
 
+    def _digest_challenge(self, algorithm, stale=False):
+        n = self._count("digest-nonces")
+        nonce = "nonce-%d-%s" % (n, hashlib.md5(str(n).encode()).hexdigest()[:8])
+        self.server.digest_nonces[nonce] = {"nc": 0, "uses": 0}
+        value = ('Digest realm="digest-realm", qop="auth", algorithm=%s, nonce="%s", opaque="op-1"%s'
+                 % (algorithm, nonce, ", stale=true" if stale else ""))
+        self.send_json({"error": "authentication required"}, 401, {"WWW-Authenticate": value})
+
+    def h_digest(self):
+        """HTTP Digest (qop=auth). Query: algorithm=MD5|SHA-256, expire_after=N uses per nonce."""
+        algorithm = self.q("algorithm", "MD5")
+        hash_name = {"MD5": "md5", "SHA-256": "sha256"}[algorithm]
+        header = self.headers.get("Authorization", "")
+        if not header.startswith("Digest "):
+            return self._digest_challenge(algorithm)
+        fields = {k.lower(): (q if q else b) for k, q, b in
+                  re.findall(r'([A-Za-z0-9_-]+)\s*=\s*(?:"([^"]*)"|([^\s,]+))', header[7:])}
+        state = self.server.digest_nonces.get(fields.get("nonce"))
+        expire_after = int(self.q("expire_after", 0))
+        if state is None or (expire_after and state["uses"] >= expire_after):
+            return self._digest_challenge(algorithm, stale=state is not None)
+        H = lambda text: hashlib.new(hash_name, text.encode()).hexdigest()
+        target = self.path
+        ha1 = H("avery:digest-realm:s3cret")
+        ha2 = H("%s:%s" % (self.command, target))
+        nc = fields.get("nc", "")
+        expected = H("%s:%s:%s:%s:auth:%s" % (ha1, fields["nonce"], nc, fields.get("cnonce", ""), ha2))
+        ok = (fields.get("username") == "avery" and fields.get("uri") == target
+              and fields.get("response") == expected and fields.get("algorithm") == algorithm
+              and fields.get("opaque") == "op-1" and int(nc, 16) > state["nc"])
+        if not ok:
+            self._count("digest-rejected")
+            return self.send_json({"error": "bad credentials"}, 401, {
+                "WWW-Authenticate": 'Digest realm="digest-realm", qop="auth", algorithm=%s, nonce="%s", opaque="op-1"'
+                                    % (algorithm, fields.get("nonce"))})
+        state["nc"] = int(nc, 16)
+        state["uses"] += 1
+        self.send_json({"user": "avery", "nc": nc})
+
     # ROUTES-END
 
 
@@ -658,6 +697,7 @@ class ApiServer:
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
+        self.httpd.digest_nonces = {}
         self.httpd.meters = {}
         self.httpd.item_versions = {}
         self.httpd.bulk_records = []

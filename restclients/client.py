@@ -22,6 +22,21 @@ USER_AGENT = "rest-clients-py/0.1"
 log = logging.getLogger("restclients.http")
 
 
+def apply_auth(auth, headers, method, url):
+    """Let an auth object add its headers.
+
+    Most schemes need only ``apply(headers)``. Those that depend on the request itself (HTTP
+    Digest hashes the method and URI) provide ``sign(headers, method, url)`` instead.
+    """
+    if auth is None:
+        return
+    sign = getattr(auth, "sign", None)
+    if sign is not None:
+        sign(headers, method, url)
+    else:
+        auth.apply(headers)
+
+
 def _as_file_parts(files):
     """Accept ``{"field": FilePart}`` or ``{"field": (filename, bytes[, content_type])}``."""
     pairs = files.items() if hasattr(files, "items") else files
@@ -67,8 +82,6 @@ class RequestBuilder:
         send_headers = dict(self.headers)
         send_headers.update(headers or {})
         auth = auth or self.auth
-        if auth is not None:
-            auth.apply(send_headers)
         body = data
         if files:
             # text fields (``form``) and files travel together in one multipart body
@@ -80,7 +93,9 @@ class RequestBuilder:
         elif form is not None:
             body = urlencode(form).encode("ascii")
             send_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
-        return PreparedRequest(method.upper(), url, send_headers, body,
+        method = method.upper()
+        apply_auth(auth, send_headers, method, url)       # last, so it can sign the final request
+        return PreparedRequest(method, url, send_headers, body,
                                self.timeout if timeout is None else timeout, auth)
 
 
@@ -147,10 +162,9 @@ class HttpClient(RequestBuilder):
                 send_headers.setdefault(name, value)
         response = self._send_with_retries(method, url, send_headers, body, timeout, request_id,
                                            keyed, expires)
-        if response.status == 401 and hasattr(auth, "invalidate"):
-            # The token may have been revoked or expired early: get a fresh one and try once more.
-            auth.invalidate()
-            auth.apply(send_headers)
+        if response.status == 401 and auth is not None and self._reauthenticate(auth, response):
+            # A token may have been revoked or a nonce expired: sign again and try once more.
+            apply_auth(auth, send_headers, method, url)
             response = self._send_with_retries(method, url, send_headers, body, timeout,
                                                request_id, keyed, expires)
         if cache_key is not None:
@@ -197,6 +211,16 @@ class HttpClient(RequestBuilder):
                 body = response.read()
             raise error_for_status(response.status, prepared.url, body, response.headers.as_dict())
         return response
+
+    @staticmethod
+    def _reauthenticate(auth, response):
+        """After a 401: ask the auth object to prepare new credentials; True if a retry is worthwhile."""
+        if hasattr(auth, "handle_challenge"):
+            return bool(auth.handle_challenge(response.headers))
+        if hasattr(auth, "invalidate"):
+            auth.invalidate()
+            return True
+        return False
 
     def _idempotency_key(self, method, send_headers):
         """Attach an Idempotency-Key to POST/PATCH when enabled; True if the call carries one.
