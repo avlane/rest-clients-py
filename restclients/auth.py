@@ -6,9 +6,10 @@ scheme needs to the outgoing header dict. Clients call it for every request.
 import base64
 import hashlib
 import os
-import re
 import threading
 from urllib.parse import urlsplit
+
+from restclients.challenges import find_challenge
 
 
 class BasicAuth:
@@ -61,20 +62,12 @@ class ApiKeyAuth:
         return "ApiKeyAuth(header=%r)" % self.header
 
 
-_CHALLENGE_PARAM = re.compile(r'([A-Za-z0-9_-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,]+))')
-
-
 def parse_digest_challenge(value):
-    """Parameters of a ``WWW-Authenticate: Digest ...`` header, or None if it is not a Digest challenge."""
-    if not value:
+    """Parameters of a ``WWW-Authenticate: Digest ...`` header, or None if it is not a usable Digest challenge."""
+    challenge = find_challenge(value, "digest")
+    if challenge is None or "nonce" not in challenge.params or "realm" not in challenge.params:
         return None
-    match = re.search(r"(?i)\bDigest\s+", value)
-    if not match:
-        return None
-    params = {}
-    for name, quoted, bare in _CHALLENGE_PARAM.findall(value[match.end():]):
-        params.setdefault(name.lower(), re.sub(r"\\(.)", r"\1", quoted) if quoted else bare)
-    return params if "nonce" in params and "realm" in params else None
+    return dict(challenge.params)
 
 
 _DIGESTS = {"md5": "md5", "sha-256": "sha256", "sha-512-256": "sha512_256"}

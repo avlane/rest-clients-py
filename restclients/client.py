@@ -10,6 +10,7 @@ import time
 import uuid
 from urllib.parse import urlencode
 
+from restclients.challenges import find_challenge
 from restclients.errors import DeadlineExceeded, TransportError, error_for_status
 from restclients.logging_utils import correlation_id, redact_url
 from restclients.ratelimit import RateLimitInfo
@@ -218,6 +219,10 @@ class HttpClient(RequestBuilder):
         if hasattr(auth, "handle_challenge"):
             return bool(auth.handle_challenge(response.headers))
         if hasattr(auth, "invalidate"):
+            bearer = find_challenge(response.headers.get("WWW-Authenticate"), "bearer")
+            if bearer is not None and bearer.error not in (None, "invalid_token"):
+                # e.g. invalid_request: the request itself is wrong, a new token would not fix it
+                return False
             auth.invalidate()
             return True
         return False

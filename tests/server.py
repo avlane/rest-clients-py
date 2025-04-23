@@ -283,6 +283,15 @@ class Handler(BaseHTTPRequestHandler):
         if action == "revoke-all" and self.command == "POST":
             self.server.valid_tokens.clear()
             return self.send_json({"revoked": True})
+        if action == "strict":
+            # a bearer token is presented but the server rejects the *request*, not the token
+            return self._challenge("Bearer", ' realm="test", error="invalid_request", error_description="malformed"')
+        if action == "scoped":
+            auth = self.headers.get("Authorization", "")
+            if (auth[7:] if auth.startswith("Bearer ") else None) not in self.server.valid_tokens:
+                return self._challenge("Bearer", ' error="invalid_token"')
+            return self.send_json({"error": "forbidden"}, 403, {
+                "WWW-Authenticate": 'Bearer realm="test", error="insufficient_scope", scope="admin write"'})
         if action == "me":
             auth = self.headers.get("Authorization", "")
             token = auth[7:] if auth.startswith("Bearer ") else None

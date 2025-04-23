@@ -34,6 +34,12 @@ class ApiError(Exception):
         self.headers = headers or {}
 
     @property
+    def challenges(self):
+        """The ``WWW-Authenticate`` challenges of a 401 (a list of ``Challenge``; empty if none)."""
+        from restclients.challenges import parse_www_authenticate
+        return parse_www_authenticate(_header(self.headers, "WWW-Authenticate"))
+
+    @property
     def problem(self):
         """The body as :class:`ProblemDetails` if the server sent one, else None.
 
