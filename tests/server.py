@@ -5,6 +5,8 @@ urllib code paths are exercised over real sockets. Routes are methods named
 ``h_<first path segment>``; add a method to add a route.
 """
 import base64
+import datetime
+import email.utils
 import hashlib
 import json
 import os
@@ -695,6 +697,29 @@ class Handler(BaseHTTPRequestHandler):
         state["nc"] = int(nc, 16)
         state["uses"] += 1
         self.send_json({"user": "avery", "nc": nc})
+
+    def h_lastmod(self):
+        """A resource validated by Last-Modified only (no ETag). POST /lastmod/touch moves the date on 1 hour."""
+        if self.segments[1:] == ["touch"] and self.command == "POST":
+            self._count("lastmod-touches")
+            return self.send_json({"touched": True})
+        touches = self.server.counters.get("lastmod-touches", 0)
+        modified = datetime.datetime(2025, 5, 1, 12, 0, 0, tzinfo=datetime.timezone.utc) \
+            + datetime.timedelta(hours=touches)
+        stamp = email.utils.format_datetime(modified, usegmt=True)
+        since = self.headers.get("If-Modified-Since")
+        if since:
+            try:
+                if modified <= email.utils.parsedate_to_datetime(since):
+                    self._count("lastmod-304")
+                    self.send_response(304)
+                    self.send_header("Last-Modified", stamp)
+                    self.end_headers()
+                    return
+            except (TypeError, ValueError):
+                pass                     # an unparsable date is ignored, as the RFC says
+        self._count("lastmod-200")
+        self.send_json({"modified": stamp, "payload": "y" * 100}, headers={"Last-Modified": stamp})
 
     # ROUTES-END
 

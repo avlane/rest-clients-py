@@ -1,8 +1,13 @@
 """A small HTTP response store for conditional requests.
 
 It does not decide freshness. Every GET is revalidated with ``If-None-Match``
-and the server answers ``304 Not Modified`` (no body) when nothing changed,
-which saves bandwidth and parsing. Entries are kept in LRU order.
+(from the stored ``ETag``) and/or ``If-Modified-Since`` (from ``Last-Modified``),
+and the server answers ``304 Not Modified`` (no body) when nothing changed, which
+saves bandwidth and parsing. Entries are kept in LRU order.
+
+ETags are the better validator (they are exact); ``Last-Modified`` has one-second
+resolution, so two changes inside the same second look identical. When a response has
+both, both validators are sent and the server gives ``If-None-Match`` precedence.
 """
 from collections import OrderedDict
 
@@ -43,13 +48,17 @@ class ResponseCache:
         """Request headers that ask the server to skip the body if unchanged."""
         entry = self.get(key)
         headers = {}
-        if entry is not None and entry.etag:
-            headers["If-None-Match"] = entry.etag
+        if entry is not None:
+            if entry.etag:
+                headers["If-None-Match"] = entry.etag
+            if entry.last_modified:
+                headers["If-Modified-Since"] = entry.last_modified
         return headers
 
     def store(self, key, response):
-        """Remember a 200 response that has an ETag. Returns True if stored."""
-        if response.status != 200 or "etag" not in response.headers:
+        """Remember a 200 response that has an ETag or Last-Modified. Returns True if stored."""
+        if response.status != 200 or ("etag" not in response.headers
+                                      and "last-modified" not in response.headers):
             return False
         if "no-store" in response.headers.get("Cache-Control", "").lower():
             return False

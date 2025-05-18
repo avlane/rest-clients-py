@@ -40,6 +40,21 @@ class ResponseCacheTests(unittest.TestCase):
         self.assertTrue(full.from_cache)
         self.assertEqual(cache.hits, 1)
 
+    def test_last_modified_alone_is_enough_to_store_and_revalidate(self):
+        cache = ResponseCache()
+        stamp = "Thu, 01 May 2025 12:00:00 GMT"
+        self.assertTrue(cache.store("k", Response(200, {"Last-Modified": stamp}, b"{}", "http://x/a")))
+        self.assertEqual(cache.conditional_headers("k"), {"If-Modified-Since": stamp})
+
+    def test_both_validators_are_sent_when_both_exist(self):
+        cache = ResponseCache()
+        stamp = "Thu, 01 May 2025 12:00:00 GMT"
+        cache.store("k", ok('"v9"', **{"Last-Modified": stamp}))
+        self.assertEqual(cache.conditional_headers("k"), {"If-None-Match": '"v9"', "If-Modified-Since": stamp})
+
+    def test_neither_validator_means_not_stored(self):
+        self.assertFalse(ResponseCache().store("k", Response(200, {"Content-Type": "x"}, b"")))
+
     def test_lru_eviction(self):
         cache = ResponseCache(max_entries=2)
         cache.store("a", ok('"1"'))
