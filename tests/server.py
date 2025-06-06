@@ -721,6 +721,36 @@ class Handler(BaseHTTPRequestHandler):
         self._count("lastmod-200")
         self.send_json({"modified": stamp, "payload": "y" * 100}, headers={"Last-Modified": stamp})
 
+    def h_fresh(self):
+        """A cacheable resource. ``max_age=N`` (default 60), ``cc=<raw Cache-Control>`` overrides,
+        ``age=N`` adds an Age header, ``expires=N`` sends Expires (N seconds ahead) instead.
+        Version bumps with POST /fresh/bump; honours If-None-Match."""
+        if self.segments[1:] == ["bump"] and self.command == "POST":
+            self._count("fresh-version")
+            return self.send_json({"bumped": True})
+        version = self.server.counters.get("fresh-version", 0) + 1
+        etag = '"f%d"' % version
+        headers = {"ETag": etag}
+        if self.q("cc"):
+            headers["Cache-Control"] = self.q("cc")
+        elif self.q("expires"):
+            when = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=int(self.q("expires")))
+            headers["Expires"] = email.utils.format_datetime(when, usegmt=True)
+            headers["Date"] = email.utils.format_datetime(datetime.datetime.now(datetime.timezone.utc), usegmt=True)
+        else:
+            headers["Cache-Control"] = "max-age=%s" % self.q("max_age", "60")
+        if self.q("age"):
+            headers["Age"] = self.q("age")
+        if self.headers.get("If-None-Match") == etag:
+            self._count("fresh-304")
+            self.send_response(304)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            return
+        self._count("fresh-200")
+        self.send_json({"version": version}, headers=headers)
+
     # ROUTES-END
 
 

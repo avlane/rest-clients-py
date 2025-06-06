@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from restclients.challenges import find_challenge
 from restclients.errors import DeadlineExceeded, TransportError, error_for_status
+from restclients.etag_cache import cache_control_directives
 from restclients.logging_utils import correlation_id, redact_url
 from restclients.ratelimit import RateLimitInfo
 from restclients.multipart import FilePart, encode_multipart
@@ -159,6 +160,11 @@ class HttpClient(RequestBuilder):
         body, timeout, auth = prepared.body, prepared.timeout, prepared.auth
         cache_key = url if method == "GET" and self.cache is not None else None
         if cache_key is not None:
+            wants_fresh = "no-cache" in cache_control_directives(
+                next((v for k, v in send_headers.items() if k.lower() == "cache-control"), ""))
+            fresh = None if wants_fresh else self.cache.fresh(cache_key)
+            if fresh is not None:
+                return fresh                # still within max-age: no request at all
             for name, value in self.cache.conditional_headers(cache_key).items():
                 send_headers.setdefault(name, value)
         response = self._send_with_retries(method, url, send_headers, body, timeout, request_id,

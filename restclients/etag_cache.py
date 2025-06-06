@@ -9,13 +9,51 @@ ETags are the better validator (they are exact); ``Last-Modified`` has one-secon
 resolution, so two changes inside the same second look identical. When a response has
 both, both validators are sent and the server gives ``If-None-Match`` precedence.
 """
+import re
+import time
 from collections import OrderedDict
+from email.utils import parsedate_to_datetime
 
-from restclients.response import Response
+from restclients.response import Headers, Response
+
+_MAX_AGE = re.compile(r"(?:^|[\s,])max-age\s*=\s*\"?(\d+)", re.I)
+
+
+def cache_control_directives(value):
+    """Lowercased directive names in a Cache-Control value, e.g. {"no-cache", "max-age"}."""
+    return {part.split("=", 1)[0].strip().lower() for part in (value or "").split(",") if part.strip()}
+
+
+def freshness_lifetime(headers, now):
+    """Seconds a stored response may be reused without asking the server, or 0 if none.
+
+    ``Cache-Control: max-age`` wins; otherwise ``Expires`` minus ``Date``; ``no-cache`` and
+    ``max-age=0`` mean "always revalidate". (No heuristic freshness from Last-Modified.)
+    """
+    control = headers.get("Cache-Control", "")
+    directives = cache_control_directives(control)
+    if "no-cache" in directives:
+        return 0.0
+    match = _MAX_AGE.search(control)
+    if match:
+        return float(match.group(1))
+    expires = headers.get("Expires")
+    if expires:
+        try:
+            expiry = parsedate_to_datetime(expires)
+            date = headers.get("Date")
+            base = parsedate_to_datetime(date).timestamp() if date else now
+            return max(0.0, expiry.timestamp() - base)
+        except (TypeError, ValueError):
+            return 0.0          # an invalid Expires means "already expired"
+    return 0.0
 
 
 class CacheEntry:
-    def __init__(self, status, headers, content, url):
+    def __init__(self, status, headers, content, url, stored_at=0.0, lifetime=0.0, age=0.0):
+        self.stored_at = stored_at
+        self.lifetime = lifetime
+        self.initial_age = age
         self.status = status
         self.headers = list(headers)
         self.content = content
@@ -26,8 +64,9 @@ class CacheEntry:
 
 
 class ResponseCache:
-    def __init__(self, max_entries=256):
+    def __init__(self, max_entries=256, clock=time.time):
         self.max_entries = max_entries
+        self._clock = clock
         self._entries = OrderedDict()
         self.hits = 0      # 304 answered from a stored body
         self.stores = 0
@@ -62,13 +101,38 @@ class ResponseCache:
             return False
         if "no-store" in response.headers.get("Cache-Control", "").lower():
             return False
-        self._entries[key] = CacheEntry(response.status, response.headers.items(),
-                                        response.content, response.url)
+        now = self._clock()
+        self._entries[key] = CacheEntry(response.status, response.headers.items(), response.content,
+                                        response.url, now, freshness_lifetime(response.headers, now),
+                                        self._age_header(response.headers))
         self._entries.move_to_end(key)
         while len(self._entries) > self.max_entries:
             self._entries.popitem(last=False)
         self.stores += 1
         return True
+
+    @staticmethod
+    def _age_header(headers):
+        value = headers.get("Age", "")
+        return float(value) if value.isdigit() else 0.0
+
+    def fresh(self, key):
+        """The stored response if it can be reused without contacting the server, else None.
+
+        Age is the time since we stored it plus any ``Age`` the response arrived with.
+        """
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        age = (self._clock() - entry.stored_at) + entry.initial_age
+        if age >= entry.lifetime:
+            return None
+        self._entries.move_to_end(key)
+        self.hits += 1
+        response = Response(entry.status, dict(entry.headers), entry.content, entry.url)
+        response.from_cache = True
+        response.age = age
+        return response
 
     def revalidated(self, key, not_modified):
         """Build the full response for a 304: stored body, headers refreshed by the 304."""
@@ -81,6 +145,12 @@ class ResponseCache:
             merged.pop(lowered.get(name.lower(), name), None)
             merged[name] = value
         self.hits += 1
+        # a 304 carries fresh caching headers: the entry is young again
+        now = self._clock()
+        entry.headers = list(merged.items())
+        entry.stored_at = now
+        entry.initial_age = self._age_header(Headers(merged))
+        entry.lifetime = freshness_lifetime(Headers(merged), now)
         response = Response(entry.status, merged, entry.content, entry.url)
         response.from_cache = True
         return response
