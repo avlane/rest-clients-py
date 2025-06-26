@@ -9,12 +9,20 @@ ETags are the better validator (they are exact); ``Last-Modified`` has one-secon
 resolution, so two changes inside the same second look identical. When a response has
 both, both validators are sent and the server gives ``If-None-Match`` precedence.
 """
+import json
+import logging
+import os
 import re
+import tempfile
 import time
 from collections import OrderedDict
 from email.utils import parsedate_to_datetime
 
+from restclients.bodies import decode_body, encode_body
 from restclients.response import Headers, Response
+
+log = logging.getLogger("restclients.cache")
+FILE_VERSION = 1
 
 _MAX_AGE = re.compile(r"(?:^|[\s,])max-age\s*=\s*\"?(\d+)", re.I)
 
@@ -160,3 +168,54 @@ class ResponseCache:
 
     def clear(self):
         self._entries.clear()
+
+
+    # -- persistence --------------------------------------------------------
+    def save(self, path):
+        """Write the cache to ``path`` as JSON, atomically, readable by the owner only.
+
+        Cached responses can contain private data, so the file is created with mode 0600
+        (on platforms that have permissions).
+        """
+        payload = {"version": FILE_VERSION, "entries": [
+            {"key": key, "status": e.status, "headers": e.headers, "url": e.url,
+             "body": encode_body(e.content), "stored_at": e.stored_at, "lifetime": e.lifetime,
+             "age": e.initial_age} for key, e in self._entries.items()]}
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")      # mkstemp creates it 0600
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp, path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
+
+    @classmethod
+    def load(cls, path, **kwargs):
+        """Read a cache saved by :meth:`save`.
+
+        A cache is disposable, so a missing, unreadable or corrupt file gives an empty cache
+        (with a warning for the latter two) instead of an error.
+        """
+        cache = cls(**kwargs)
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+            if payload.get("version") != FILE_VERSION:
+                raise ValueError("unsupported cache file version %r" % payload.get("version"))
+            for item in payload["entries"]:
+                entry = CacheEntry(item["status"], [tuple(h) for h in item["headers"]],
+                                   decode_body(item["body"]), item["url"], item["stored_at"],
+                                   item["lifetime"], item["age"])
+                cache._entries[item["key"]] = entry
+        except FileNotFoundError:
+            return cls(**kwargs)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+            log.warning("ignoring unusable cache file %s: %s", path, exc)
+            return cls(**kwargs)
+        while len(cache._entries) > cache.max_entries:
+            cache._entries.popitem(last=False)
+        return cache

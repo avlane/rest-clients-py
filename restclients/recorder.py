@@ -8,12 +8,12 @@ much smaller than vcrpy, but it works the same way and is easy to read.
 Credentials never reach the file: header values and secret-looking query
 parameters are redacted *before* storing.
 """
-import base64
 import json
 import os
 import re
 import tempfile
 
+from restclients.bodies import decode_body, encode_body  # noqa: F401  (re-exported)
 from restclients.client import HttpClient
 from restclients.errors import ApiError
 from restclients.logging_utils import (REDACTED, SENSITIVE_HEADERS, SENSITIVE_PARAMS,
@@ -21,22 +21,6 @@ from restclients.logging_utils import (REDACTED, SENSITIVE_HEADERS, SENSITIVE_PA
 from restclients.response import Response
 
 FORMAT_VERSION = 1
-
-
-def encode_body(body):
-    """JSON-friendly form of a body: ``{"text": ...}`` when it is UTF-8, else base64."""
-    if not body:
-        return {"text": ""}
-    try:
-        return {"text": body.decode("utf-8")}
-    except UnicodeDecodeError:
-        return {"base64": base64.b64encode(body).decode("ascii")}
-
-
-def decode_body(stored):
-    if "base64" in stored:
-        return base64.b64decode(stored["base64"])
-    return stored.get("text", "").encode("utf-8")
 
 
 class Scrubber:
