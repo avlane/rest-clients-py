@@ -751,6 +751,31 @@ class Handler(BaseHTTPRequestHandler):
         self._count("fresh-200")
         self.send_json({"version": version}, headers=headers)
 
+    def h_vary(self):
+        """One URL, two representations chosen by Accept (Vary: Accept); each has its own ETag."""
+        wants_text = "text/plain" in self.headers.get("Accept", "")
+        etag = '"vary-text-1"' if wants_text else '"vary-json-1"'
+        headers = {"ETag": etag, "Cache-Control": "max-age=%s" % self.q("max_age", "60"),
+                   "Vary": self.q("vary", "Accept")}
+        if self.headers.get("If-None-Match") == etag:
+            self._count("vary-304")
+            self.send_response(304)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            return
+        self._count("vary-200")
+        if wants_text:
+            body = b"plain text representation"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            return self.wfile.write(body)
+        self.send_json({"representation": "json"}, headers=headers)
+
     # ROUTES-END
 
 

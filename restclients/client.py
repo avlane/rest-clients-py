@@ -162,10 +162,10 @@ class HttpClient(RequestBuilder):
         if cache_key is not None:
             wants_fresh = "no-cache" in cache_control_directives(
                 next((v for k, v in send_headers.items() if k.lower() == "cache-control"), ""))
-            fresh = None if wants_fresh else self.cache.fresh(cache_key)
+            fresh = None if wants_fresh else self.cache.fresh(cache_key, send_headers)
             if fresh is not None:
                 return fresh                # still within max-age: no request at all
-            for name, value in self.cache.conditional_headers(cache_key).items():
+            for name, value in self.cache.conditional_headers(cache_key, send_headers).items():
                 send_headers.setdefault(name, value)
         response = self._send_with_retries(method, url, send_headers, body, timeout, request_id,
                                            keyed, expires)
@@ -178,7 +178,7 @@ class HttpClient(RequestBuilder):
             if response.status == 304 and cache_key in self.cache:
                 response = self.cache.revalidated(cache_key, response)
             else:
-                self.cache.store(cache_key, response)
+                self.cache.store(cache_key, response, send_headers)
         if raise_for_status:
             response.raise_for_status()
         return response

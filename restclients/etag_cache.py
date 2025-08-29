@@ -32,6 +32,16 @@ def cache_control_directives(value):
     return {part.split("=", 1)[0].strip().lower() for part in (value or "").split(",") if part.strip()}
 
 
+def _normalise(value):
+    return " ".join((value or "").split())
+
+
+def vary_names(response_headers):
+    """Header names listed in ``Vary`` (lowercased), or None for ``Vary: *`` (never reusable)."""
+    names = [n.strip().lower() for n in response_headers.get("Vary", "").split(",") if n.strip()]
+    return None if "*" in names else names
+
+
 def freshness_lifetime(headers, now):
     """Seconds a stored response may be reused without asking the server, or 0 if none.
 
@@ -58,7 +68,8 @@ def freshness_lifetime(headers, now):
 
 
 class CacheEntry:
-    def __init__(self, status, headers, content, url, stored_at=0.0, lifetime=0.0, age=0.0):
+    def __init__(self, status, headers, content, url, stored_at=0.0, lifetime=0.0, age=0.0, vary=None):
+        self.vary = dict(vary or {})      # request header (lowercase) -> the value this entry was fetched with
         self.stored_at = stored_at
         self.lifetime = lifetime
         self.initial_age = age
@@ -85,34 +96,52 @@ class ResponseCache:
     def __contains__(self, key):
         return key in self._entries
 
+    @staticmethod
+    def _matches(entry, request_headers):
+        """Was ``entry`` fetched with the same values for every header its response varies on?"""
+        wanted = {k.lower(): _normalise(v) for k, v in (request_headers or {}).items()}
+        return all(wanted.get(name, "") == value for name, value in entry.vary.items())
+
     def get(self, key):
         entry = self._entries.get(key)
         if entry is not None:
             self._entries.move_to_end(key)
         return entry
 
-    def conditional_headers(self, key):
+    def conditional_headers(self, key, request_headers=None):
         """Request headers that ask the server to skip the body if unchanged."""
         entry = self.get(key)
         headers = {}
-        if entry is not None:
+        if entry is not None and self._matches(entry, request_headers):
             if entry.etag:
                 headers["If-None-Match"] = entry.etag
             if entry.last_modified:
                 headers["If-Modified-Since"] = entry.last_modified
         return headers
 
-    def store(self, key, response):
-        """Remember a 200 response that has an ETag or Last-Modified. Returns True if stored."""
+    def store(self, key, response, request_headers=None):
+        """Remember a 200 response that has an ETag or Last-Modified. Returns True if stored.
+
+        ``request_headers`` are those the request was sent with: the response's ``Vary`` names
+        the ones that select the representation (``Vary: Accept``), and their values are kept
+        so the entry is only reused for a request that agrees. One representation is kept per
+        key; a request that asks for another one replaces it.
+        """
         if response.status != 200 or ("etag" not in response.headers
                                       and "last-modified" not in response.headers):
             return False
         if "no-store" in response.headers.get("Cache-Control", "").lower():
             return False
+        names = vary_names(response.headers)
+        if names is None:
+            self._entries.pop(key, None)
+            return False                       # Vary: * can never be matched
+        wanted = {k.lower(): _normalise(v) for k, v in (request_headers or {}).items()}
         now = self._clock()
         self._entries[key] = CacheEntry(response.status, response.headers.items(), response.content,
                                         response.url, now, freshness_lifetime(response.headers, now),
-                                        self._age_header(response.headers))
+                                        self._age_header(response.headers),
+                                        {name: wanted.get(name, "") for name in names})
         self._entries.move_to_end(key)
         while len(self._entries) > self.max_entries:
             self._entries.popitem(last=False)
@@ -124,13 +153,13 @@ class ResponseCache:
         value = headers.get("Age", "")
         return float(value) if value.isdigit() else 0.0
 
-    def fresh(self, key):
+    def fresh(self, key, request_headers=None):
         """The stored response if it can be reused without contacting the server, else None.
 
         Age is the time since we stored it plus any ``Age`` the response arrived with.
         """
         entry = self._entries.get(key)
-        if entry is None:
+        if entry is None or not self._matches(entry, request_headers):
             return None
         age = (self._clock() - entry.stored_at) + entry.initial_age
         if age >= entry.lifetime:
@@ -180,7 +209,7 @@ class ResponseCache:
         payload = {"version": FILE_VERSION, "entries": [
             {"key": key, "status": e.status, "headers": e.headers, "url": e.url,
              "body": encode_body(e.content), "stored_at": e.stored_at, "lifetime": e.lifetime,
-             "age": e.initial_age} for key, e in self._entries.items()]}
+             "age": e.initial_age, "vary": e.vary} for key, e in self._entries.items()]}
         directory = os.path.dirname(os.path.abspath(path))
         os.makedirs(directory, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")      # mkstemp creates it 0600
@@ -209,7 +238,7 @@ class ResponseCache:
             for item in payload["entries"]:
                 entry = CacheEntry(item["status"], [tuple(h) for h in item["headers"]],
                                    decode_body(item["body"]), item["url"], item["stored_at"],
-                                   item["lifetime"], item["age"])
+                                   item["lifetime"], item["age"], item.get("vary"))
                 cache._entries[item["key"]] = entry
         except FileNotFoundError:
             return cls(**kwargs)
