@@ -20,5 +20,35 @@ class ExampleScriptTests(unittest.TestCase):
         self.assertIn("duplicates dropped: 1", lines)
 
 
+class ServeScriptTests(unittest.TestCase):
+    def test_serve_starts_answers_and_stops_on_sigint(self):
+        import json
+        import signal
+        import urllib.request
+
+        proc = subprocess.Popen([sys.executable, "-u", "-m", "examples.serve"], cwd=ROOT,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            line = proc.stdout.readline().strip()
+            self.assertTrue(line.startswith("listening on http://127.0.0.1:"), line)
+            url = line.split("listening on ", 1)[1]
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # no proxy for loopback
+            with opener.open(url + "/", timeout=10) as resp:
+                routes = json.load(resp)["routes"]
+            self.assertIn("/flaky", routes)
+            self.assertIn("/oauth", routes)
+            self.assertNotIn("/root", routes)
+        finally:
+            proc.send_signal(signal.SIGINT)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            proc.stdout.close()
+            proc.stderr.close()
+        self.assertEqual(proc.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

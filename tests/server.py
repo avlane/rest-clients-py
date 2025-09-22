@@ -75,6 +75,12 @@ class Handler(BaseHTTPRequestHandler):
         return values[0] if values else default
 
     # -- routes -----------------------------------------------------------
+    def h_root(self):
+        """GET / lists the routes, which makes the server easy to explore with curl."""
+        names = sorted(n[2:].replace("_", "-") for n in dir(self)
+                       if n.startswith("h_") and n != "h_root")
+        self.send_json({"server": self.server_version, "routes": ["/" + n for n in names]})
+
     def _json_body(self):
         try:
             return json.loads(self.body or b"{}")
@@ -782,8 +788,8 @@ class Handler(BaseHTTPRequestHandler):
 class ApiServer:
     """Context manager: ``with ApiServer() as srv: srv.url``."""
 
-    def __init__(self):
-        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    def __init__(self, port=0):
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
         self.httpd.requests = []
         self.httpd.counters = {}
         self.httpd.digest_nonces = {}

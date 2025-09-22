@@ -31,7 +31,7 @@ credentials, authorization code with PKCE, refresh tokens).
 
 Run the tests with `python3 -m unittest discover`. The package declares
 3.9+ and `.github/workflows/tests.yml` runs a 3.9-3.13 matrix. To see signed webhooks working end to end:
-`python3 -m examples.webhook_demo`.
+`python3 -m examples.webhook_demo`. To poke at the test API with `curl`: `python3 -m examples.serve`.
 
 ## Layout
 
