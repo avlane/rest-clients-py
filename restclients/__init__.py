@@ -10,7 +10,7 @@ from importlib import import_module
 # and leaves the decision to the application.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
 
 _EXPORTS = {
     # clients

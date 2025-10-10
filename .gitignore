@@ -9,3 +9,8 @@ dist/
 .vscode/
 .DS_Store
 *.log
+*.part
+.coverage
+htmlcov/
+.mypy_cache/
+.pytest_cache/

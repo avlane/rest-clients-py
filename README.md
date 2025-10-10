@@ -30,8 +30,20 @@ redirects, byte ranges, multipart uploads and a small OAuth2 server (client
 credentials, authorization code with PKCE, refresh tokens).
 
 Run the tests with `python3 -m unittest discover`. The package declares
-3.9+ and `.github/workflows/tests.yml` runs a 3.9-3.13 matrix. To see signed webhooks working end to end:
+3.9+ and `.github/workflows/tests.yml` lists a 3.9-3.14 matrix. To see signed webhooks working end to end:
 `python3 -m examples.webhook_demo`. To poke at the test API with `curl`: `python3 -m examples.serve`.
+
+## Where to start
+
+The history is the curriculum, but if you read the code in this order each step builds on the last:
+
+1. `restclients/basics.py` and `tests/test_basics.py`: one function over `urllib.request`
+2. `client.py`, `urllib_client.py`, `response.py`, `errors.py`: the shared client and error types
+3. `requests_client.py` + `testing.py`: the same client over an injected session, tested with a fake
+4. `pagination.py`, `auth.py`, `retry.py`, `ratelimit.py`, `etag_cache.py`: the practical parts
+5. `async_client.py`, `async_streams_client.py`, `concurrency.py`: async and bounded concurrency
+6. `models.py`, `validation.py`, `recorder.py`, `openapi_gen.py`: typed payloads, fixtures, generated clients
+7. `webhooks.py`, `signatures.py`, `idempotency.py`, `breaker.py`: reliability from the receiving side too
 
 ## Layout
 
